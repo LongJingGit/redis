@@ -7926,11 +7926,11 @@ int main(int argc, char **argv)
 #endif /* __arm64__ */
 #endif /* __linux__ */
         moduleInitModulesSystemLast();
-        moduleLoadFromQueue();
+        moduleLoadFromQueue(); // 加载 module
         ACLLoadUsersAtStartup();
         InitServerLast();
         aofLoadManifestFromDisk();
-        loadDataFromDisk();
+        loadDataFromDisk(); // 加载 DB 文件
         aofOpenIfNeededOnServerStart();
         aofDelHistoryFiles();
         if (server.cluster_enabled)
