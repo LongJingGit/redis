@@ -584,11 +584,11 @@ Redis 协议的请求和响应也是有固定套路的。对于请求指令，�
 
 Redis 协议的响应格式有 5 种，分别是：
 
-1. simple strings 简单字符串类型，以 + 开头，后面跟字符串，以 CRLF（即 \r\n）结尾。这种类型不是二进制安全类型，字符串中不能包含 \r 或者 \n。比如许多响应回复以 OK 作为操作成功的标志，协议内容就是 +OK\r\n 。
-2. Redis 协议将错误作为一种专门的类型，格式同简单字符串类型，唯一不同的是以 -（减号）开头。Redis 内部实现对 Redis 协议做了进一步规范，减号后面一般先跟 ERR 或者 WRONGTYPE，然后再跟其他简单字符串，最后以 CRLF（回车换行）结束。这里给了两个示例，client 在解析响应时，一旦发现 - 开头，就知道收到 Error 响应。
-3. Integer 整数类型。整数类型以 ：开头，后面跟字符串表示的数字，最后以回车换行结尾。Redis 中许多命令都返回整数，但整数的含义要由具体命令来确定。比如，对于 incr 指令，：后的整数表示变更后的数值；对于 llen 表示 list 列表的长度，对于 exists 指令，1 表示 key 存在，0 表示 key 不存在。这里给个例子，：后面跟了个 1000，然后回车换行结束。
-4. bulk strings 字符串块类型。字符串块分头部和真正字符串内容两部分。字符串块类型的头部， 为 `$` 开头，随后跟真正字符串内容的字节长度，然后以 CRLF 结尾。字符串块的头部之后，跟随真正的字符串内容，最后以 CRLF 结束字符串块。字符串块用于表示二进制安全的字符串，最大长度可以支持 512MB。一个常规的例子 `$6\r\nfoobar\r\n`，对于空字串，可以表示为 `$0\r\n\r\n`，NULL字串： `$-1\r\n`。
-5. Arrays 数组类型，如果一个命令需要返回多条数据就需要用数组格式类型，另外，前面提到 client 的请求命令也是主要采用这种格式。Arrays 数组类型，以 * 开头，随后跟一个数组长度 N，然后以回车换行结尾；然后后面跟随 N 个数组元素，每个数组元素的类型，可以是 Redis 协议中除内联格式外的任何一种类型。比如，
+1. simple strings 简单字符串类型，以 `+` 开头，后面跟字符串，以 CRLF（即 \r\n）结尾。这种类型不是二进制安全类型，字符串中不能包含 \r 或者 \n。比如许多响应回复以 OK 作为操作成功的标志，协议内容就是 +OK\r\n 。
+2. Redis 协议将错误作为一种专门的类型，格式同简单字符串类型，唯一不同的是以 `-`（减号）开头。Redis 内部实现对 Redis 协议做了进一步规范，减号后面一般先跟 ERR 或者 WRONGTYPE，然后再跟其他简单字符串，最后以 CRLF（\r\n）结束。client 在解析响应时，一旦发现 - 开头，就知道收到 Error 响应。
+3. Integer 整数类型。整数类型以 `:` 开头，后面跟字符串表示的数字，最后以  CRLF（\r\n） 结尾。Redis 中许多命令都返回整数，但整数的含义要由具体命令来确定。比如，对于 incr 指令，`:` 后的整数表示变更后的数值；对于 llen 表示 list 列表的长度，对于 exists 指令，1 表示 key 存在，0 表示 key 不存在。
+4. bulk strings 字符串块类型。字符串块分头部和真正字符串内容两部分。字符串块类型的头部， 为 `$` 开头，随后跟真正字符串内容的字节长度，然后以 CRLF（\r\n） 结尾。字符串块的头部之后，跟随真正的字符串内容，最后以 CRLF（\r\n) 结束字符串块。字符串块用于表示二进制安全的字符串，最大长度可以支持 512MB。一个常规的例子 `$6\r\nfoobar\r\n`，对于空字串，可以表示为 `$0\r\n\r\n`，NULL字串： `$-1\r\n`。
+5. Arrays 数组类型，如果一个命令需要返回多条数据就需要用数组格式类型，另外，前面提到 client 的请求命令也是主要采用这种格式。Arrays 数组类型，以 * 开头，随后跟一个数组长度 N，然后以 CRLF（\r\n） 结尾；然后后面跟随 N 个数组元素，每个数组元素的类型，可以是 Redis 协议中除内联格式外的任何一种类型。比如，
    1. 字符串块的数组实例: `*2\r\n$3\r\nget\r\n$3\r\nkey\r\n`
    2. 整数数组实例：`*3\r\n:1\r\n:2\r\n:3\r\n`
    3. 混合数组实例：`*3\r\n :1\r\n-Bar\r\n$6\r\n foobar\r\n`
@@ -628,9 +628,9 @@ Redis 中的事件处理模块，采用的是作者自己开发的 ae 事件驱�
 
 其中，网络 IO 读写处理采用的是 IO 多路复用技术，通过对 evport、epoll、kqueue、select 等进行封装，同时监听多个 socket，并根据 socket 目前执行的任务，来为 socket 关联不同的事件处理器。
 
-当监听端口对应的 socket 收到连接请求后，就会创建一个 client 结构，通过 client 结构来对连接状态进行管理。在请求进入时，将请求命令读取缓冲并进行解析，并存入到 client 的参数列表。
+当监听端口对应的 socket 收到连接请求后，就会创建一个 client 结构，通过 client 结构来对连接状态进行管理。在请求进入时，将请求命令读取缓冲并进行解析，并存入到 client 的参数列表。然后根据请求命令找到对应的 redisCommand，最后根据命令协议，对请求参数进一步的解析、校验并执行。
 
-然后根据请求命令找到对应的 redisCommand，最后根据命令协议，对请求参数进一步的解析、校验并执行。Redis 中时间事件比较简单，目前主要是执行 serverCron，来做一些统计更新、过期 key 清理、AOF 及 RDB 持久化等辅助操作。
+Redis 中时间事件比较简单，目前主要是执行 serverCron，来做一些统计更新、过期 key 清理、AOF 及 RDB 持久化等辅助操作。
 
 ### 数据管理
 
@@ -663,7 +663,7 @@ Redis 是一个事件驱动程序，但和 Memcached 不同的是，Redis 并没
 Redis 的事件驱动模型处理 2 类事件：
 
 - 文件事件 fileEvent：如连接建立、接受请求命令、发送响应等；
-- 时间事件 timeEvent：如 Redis 中定期要执行的统计、key 淘汰、缓冲数据写出、rehash等。
+- 时间事件 timeEvent：如 Redis 中定期要执行的统计、key 淘汰、缓冲数据写出、rehash 等。
 
 ![类图](images/事件驱动模型.png)
 
@@ -706,11 +706,11 @@ Redis 在启动时，在 initServer 中对监听的 socket 注册读事件，事
 
 ##### 请求处理函数 readQueryFromClient
 
-连接函数在创建 client 时，会对新连接 socket 注册一个读事件，该读事件的事件处理器就是 readQueryFromClient。在连接 socket 有请求命令到达时，IO 多路复用程序会获取并触发文件事件，然后这个读事件被分发器派发给本请求的处理函数。readQueryFromClient 会从连接 socket 读取数据，存入 client 的 query 缓冲，然后进行解析命令，按照 Redis 当前支持的 2 种请求格式，及 inline 内联格式和 multibulk 字符块数组格式进行尝试解析。解析完毕后，client 会根据请求命令从命令表中获取到对应的 redisCommand，如果对应 cmd 存在。则开始校验请求的参数，以及当前 server 的内存、磁盘及其他状态，完成校验后，然后真正开始执行 redisCommand 的处理函数，进行具体命令的执行，最后将执行结果作为响应写入 client 的写缓冲中。
+连接函数在创建 client 时，会对新连接 socket 注册一个读事件，该读事件的事件处理器就是 readQueryFromClient。在连接 socket 有请求命令到达时，IO 多路复用程序会获取并触发文件事件，然后这个读事件被分发器派发给本请求的处理函数。readQueryFromClient 会从连接 socket 读取数据，存入 client 的 query 缓冲，然后进行解析命令，按照 Redis 当前支持的 2 种请求格式，即 inline 内联格式和 multibulk 字符块数组格式进行尝试解析。解析完毕后，client 会根据请求命令从命令表中获取到对应的 redisCommand，如果对应 cmd 存在。则开始校验请求的参数，以及当前 server 的内存、磁盘及其他状态，完成校验后，然后真正开始执行 redisCommand 的处理函数，进行具体命令的执行，最后将执行结果作为响应写入 client 的写缓冲中。
 
 ##### 命令回复处理器 sendReplyToClient
 
-当 redis需要发送响应给client时，Redis 事件循环中会对client的连接socket注册写事件，这个写事件的处理函数就是sendReplyToClient。通过注册写事件，将 client 的socket与 AE_WRITABLE 进行间接关联。当 Client fd 可进行写操作时，就会触发写事件，该函数就会将写缓冲中的数据发送给调用方。
+当 redis 需要发送响应给 client 时，Redis 事件循环中会对 client 的连接 socket 注册写事件，这个写事件的处理函数就是 sendReplyToClient。通过注册写事件，将 client 的 socket 与 AE_WRITABLE 进行间接关联。当 Client fd 可进行写操作时，就会触发写事件，该函数就会将写缓冲中的数据发送给调用方。
 
 ### 时间事件处理
 
@@ -1163,7 +1163,7 @@ Redis 在进行全量同步时，master 会将内存数据通过 bgsave 落地�
 
 ![类图](images/redis主从复制-3.png)
 
-slave 创建与 master 的连接后，首先发送 ping 指令，如果 master 没有返回异常，而是返回 pong，则说明 master 可用。如果 Redis 设置了密码，slave 会发送 auth $masterauth 指令，进行鉴权。当鉴权完毕，从库就通过 replconf 发送自己的端口及 IP 给 master。接下来，slave 继续通过 replconf 发送 capa eof capa psync2 进行复制版本校验。如果 master 校验成功。从库接下来就通过 psync 将自己的复制 id、复制偏移发送给 master，正式开始准备数据同步。
+slave 创建与 master 的连接后，首先发送 ping 指令，如果 master 没有返回异常，而是返回 pong，则说明 master 可用。如果 Redis 设置了密码，slave 会发送 `auth $masterauth` 指令，进行鉴权。当鉴权完毕，从库就通过 replconf 发送自己的端口及 IP 给 master。接下来，slave 继续通过 replconf 发送 `capa eof capa psync2` 进行复制版本校验。如果 master 校验成功。从库接下来就通过 psync 将自己的复制 id、复制偏移发送给 master，正式开始准备数据同步。
 
 主库接收到从库发来的 psync 指令后，则开始判断可以进行数据同步的方式。前面讲到，Redis 当前保存了复制 id，replid 和 replid2。如果从库发来的复制 id，与 master 的复制 id（即 replid 和 replid2）相同，并且复制偏移在复制缓冲积压中，则可以进行增量同步。master 发送 continue 响应，并返回 master 的 replid。slave 将 master 的 replid 替换为自己的 replid，并将之前的复制 id 设置为 replid2。之后，master 则可继续发送，复制偏移位置 之后的指令，给 slave，完成数据同步。
 
@@ -1178,6 +1178,25 @@ slave 创建与 master 的连接后，首先发送 ping 指令，如果 master �
 相比之前的 sync，psync2 优化很明显。在短时间断开连接、slave 重启、切主等多种场景，只要延迟不太久，复制偏移仍然在复制积压缓冲，均可进行增量同步。master 不用构建并发送巨大的 rdb，可以大大减轻 master 的负荷和网络带宽的开销。同时，slave 可以通过轻量的增量复制，实现数据同步，快速恢复服务，减少系统抖动。
 
 但是，psync 依然严重依赖于复制缓冲积压，太大会占用过多内存，太小会导致频繁的全量复制。而且，由于内存限制，即便设置相对较大的复制缓冲区，在 slave 断开连接较久时，仍然很容易被复制缓冲积压冲刷，从而导致全量复制。
+
+### 主从模式的不足
+
+主从模式并不完美，它也存在许多不足之处：
+
+* Redis 主从模式不具备自动容错和恢复功能，如果主节点宕机，Redis 集群将无法工作，此时需要人为干预，将从节点提升为主节点。
+* 如果主机宕机前有一部分数据未能及时同步到从机，即使切换主机后也会造成数据不一致的问题，从而降低了系统的可用性。
+* 因为只有一个主节点，所以其写入能力和存储能力都受到一定程度地限制。
+* 在进行数据全量同步时，若同步的数据量较大可能会造卡顿的现象。
+
+## Redis 哨兵模式
+
+在 Redis 主从复制模式中，因为系统不具备自动恢复的功能，所以当主服务器（master）宕机后，需要手动把一台从服务器（slave）切换为主服务器。在这个过程中，不仅需要人为干预，而且还会造成一段时间内服务器处于不可用状态，同时数据安全性也得不到保障，因此主从模式的可用性较低，不适用于线上生产环境。
+
+Redis 官方推荐一种高可用方案，也就是 Redis Sentinel 哨兵模式，它弥补了主从模式的不足。Sentinel 通过监控的方式获取主机的工作状态是否正常，当主机发生故障时， Sentinel 会自动进行 Failover（即故障转移），并将其监控的从机提升主服务器（master），从而保证了系统的高可用性。
+
+### 哨兵模式原理
+
+### 哨兵模式应用
 
 ## Redis 集群
 
@@ -1269,7 +1288,7 @@ Redis 社区官方在源代码中也提供了 redis-trib.rb，作为 Redis Clust
 
 Redis Cluster 在 slot 迁移过程中，获取key指令以及迁移指令逐一发送并执行，不影响 Client 的正常访问。但在迁移单条或多条 key 时，Redis 节点是在阻塞状态下进行的，也就是说，Redis 在迁移 key 时，一旦开始执行迁移指令，就会阻塞，直到迁移成功或确认失败后，才会停止该 key 的迁移，从而继续处理其他请求。slot 内的 key 迁移是通过 migrate 指令进行的。
 
-在源节点接收到 migrate $host $port $key $destination-db 的指令后，首先 slot 迁移的源节点会与迁移的目标节点建立 socket 连接，第一次迁移，或者迁移过程中，当前待迁移的 DB 与前一次迁移的 DB 不同，在迁移数据前，还需要发送 select $dbid 进行切换到正确的 DB。
+在源节点接收到 `migrate $host $port $key $destination-db` 的指令后，首先 slot 迁移的源节点会与迁移的目标节点建立 socket 连接，第一次迁移，或者迁移过程中，当前待迁移的 DB 与前一次迁移的 DB 不同，在迁移数据前，还需要发送 select $dbid 进行切换到正确的 DB。
 
 ![类图](images/redis集群-8.png)
 
@@ -1296,6 +1315,10 @@ slot 迁移过程中，对节点里的 key 处理方式如下：
 
 再次，key 迁移过程是阻塞模式，迁移大 value 会导致服务卡顿。而且，迁移过程，先获取 key，再迁移，效率低。最后，Cluster 模式下，集群复制的 slave 只能挂载到 master，不支持 slave 嵌套，会导致 master 的压力过大，无法支持那些，需要特别多 slave、读 TPS 特别大的业务场景。
 
+## Redis 分布式锁
+
+
+
 ## 源码编译安装
 
 从 github 获取源码并 cd 到源码目录中
@@ -1303,7 +1326,8 @@ slot 迁移过程中，对节点里的 key 处理方式如下：
 ### 编译
 
 ```sh
-make 
+make
+# redis 源码默认的优化为 O2，在 Makefile 文件 Line18。（备注：貌似只将这里的 O2 改为 O0 还是无法真正改动优化级别）
 ```
 
 ### 安装
