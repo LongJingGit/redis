@@ -265,8 +265,7 @@ static int connSocketSetWriteHandler(connection *conn, ConnectionCallbackFunc fu
         conn->flags &= ~CONN_FLAG_WRITE_BARRIER;
     if (!conn->write_handler)
         aeDeleteFileEvent(server.el, conn->fd, AE_WRITABLE);
-    else if (aeCreateFileEvent(server.el, conn->fd, AE_WRITABLE,
-                               conn->type->ae_handler, conn) == AE_ERR)
+    else if (aeCreateFileEvent(server.el, conn->fd, AE_WRITABLE, conn->type->ae_handler, conn) == AE_ERR)
         return C_ERR;
     return C_OK;
 }
@@ -279,11 +278,12 @@ static int connSocketSetReadHandler(connection *conn, ConnectionCallbackFunc fun
     if (func == conn->read_handler)
         return C_OK;
 
-    conn->read_handler = func;
+    conn->read_handler = func; // 设置读事件回调函数
     if (!conn->read_handler)
         aeDeleteFileEvent(server.el, conn->fd, AE_READABLE);
-    else if (aeCreateFileEvent(server.el, conn->fd,
-                               AE_READABLE, conn->type->ae_handler, conn) == AE_ERR)
+    // 监听连接 socket fd 的可读事件，并设置回调函数
+    // 当 EPOLLIN 事件触发之后，回调到 ae_handler 中，然后在 ae_handler 中调用到 read_handler
+    else if (aeCreateFileEvent(server.el, conn->fd, AE_READABLE, conn->type->ae_handler, conn) == AE_ERR)
         return C_ERR;
     return C_OK;
 }

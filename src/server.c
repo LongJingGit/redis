@@ -2634,8 +2634,7 @@ void initServer(void)
 
     if (server.syslog_enabled)
     {
-        openlog(server.syslog_ident, LOG_PID | LOG_NDELAY | LOG_NOWAIT,
-                server.syslog_facility);
+        openlog(server.syslog_ident, LOG_PID | LOG_NDELAY | LOG_NOWAIT, server.syslog_facility); // linux 系统日志接口
     }
 
     /* Initialization after setting defaults from the config system. */
@@ -2665,8 +2664,7 @@ void initServer(void)
     server.get_ack_from_slaves = 0;
     server.client_pause_type = CLIENT_PAUSE_OFF;
     server.client_pause_end_time = 0;
-    memset(server.client_pause_per_purpose, 0,
-           sizeof(server.client_pause_per_purpose));
+    memset(server.client_pause_per_purpose, 0, sizeof(server.client_pause_per_purpose));
     server.postponed_clients = listCreate();
     server.events_processed_while_blocked = 0;
     server.system_memory_size = zmalloc_get_memory_size();
@@ -2705,15 +2703,13 @@ void initServer(void)
     server.db = zmalloc(sizeof(redisDb) * server.dbnum);
 
     /* Open the TCP listening socket for the user commands. */
-    if (server.port != 0 &&
-        listenToPort(server.port, &server.ipfd) == C_ERR)
+    if (server.port != 0 && listenToPort(server.port, &server.ipfd) == C_ERR)
     {
         /* Note: the following log text is matched by the test suite. */
         serverLog(LL_WARNING, "Failed listening on port %u (TCP), aborting.", server.port);
         exit(1);
     }
-    if (server.tls_port != 0 &&
-        listenToPort(server.tls_port, &server.tlsfd) == C_ERR)
+    if (server.tls_port != 0 && listenToPort(server.tls_port, &server.tlsfd) == C_ERR)
     {
         /* Note: the following log text is matched by the test suite. */
         serverLog(LL_WARNING, "Failed listening on port %u (TLS), aborting.", server.tls_port);
@@ -2828,6 +2824,7 @@ void initServer(void)
 
     /* Create an event handler for accepting new connections in TCP and Unix
      * domain sockets. */
+    // 将监听 socket ipfd 加入到 epoll 中，并设置可读事件的回调函数 acceptTcpHandler
     if (createSocketAcceptHandler(&server.ipfd, acceptTcpHandler) != C_OK)
     {
         serverPanic("Unrecoverable error creating TCP socket accept handler.");
@@ -2845,8 +2842,7 @@ void initServer(void)
     if (aeCreateFileEvent(server.el, server.module_pipe[0], AE_READABLE,
                           modulePipeReadable, NULL) == AE_ERR)
     {
-        serverPanic(
-            "Error registering the readable event for the module pipe.");
+        serverPanic("Error registering the readable event for the module pipe.");
     }
 
     /* Register before and after sleep handlers (note this needs to be done
@@ -3597,7 +3593,7 @@ void call(client *c, int flags)
         monotonic_start = getMonotonicUs();
 
     server.in_nested_call++;
-    c->cmd->proc(c);
+    c->cmd->proc(c); // 执行命令
     server.in_nested_call--;
 
     /* In order to avoid performance implication due to querying the clock using a system call 3 times,
@@ -3930,6 +3926,9 @@ int commandCheckArity(client *c, sds *err)
  * processCommand() execute the command or prepare the
  * server for a bulk read from the client.
  *
+ * 如果这个函数被调用，我们已经读取了整个命令，参数在 client 的 argv/argc 字段中。
+ * processCommand() 执行命令或让服务器准备从客户端进行批量读取
+ *
  * If C_OK is returned the client is still alive and valid and
  * other operations can be performed by the caller. Otherwise
  * if C_ERR is returned the client was destroyed (i.e. after QUIT). */
@@ -3965,7 +3964,10 @@ int processCommand(client *c)
     }
 
     /* Now lookup the command and check ASAP about trivial error conditions
-     * such as wrong arity, bad command name and so forth. */
+     * such as wrong arity, bad command name and so forth.
+     *
+     * 注意: 在这里给 cmd lastcmd readcmd 这些成员变量赋值。这些成员变量内部包含一些函数指针，真正执行 command 的时候会调用不同的函数
+     */
     c->cmd = c->lastcmd = c->realcmd = lookupCommand(c->argv, c->argc);
     sds err;
     if (!commandCheckExistence(c, &err))
@@ -4317,7 +4319,7 @@ int processCommand(client *c)
     }
     else
     {
-        call(c, CMD_CALL_FULL);
+        call(c, CMD_CALL_FULL); // 在这里真正的开始执行命令
         c->woff = server.master_repl_offset;
         if (listLength(server.ready_keys))
             handleClientsBlockedOnKeys();
@@ -7743,7 +7745,7 @@ int main(int argc, char **argv)
 
     /* To achieve entropy, in case of containers, their time() and getpid() can
      * be the same. But value of tv_usec is fast enough to make the difference */
-    gettimeofday(&tv, NULL);
+    gettimeofday(&tv, NULL);                   // 获取当前日期和时间
     srand(time(NULL) ^ getpid() ^ tv.tv_usec); // 初始化随机数种子
     srandom(time(NULL) ^ getpid() ^ tv.tv_usec);
     init_genrand64(((long long)tv.tv_sec * 1000000 + tv.tv_usec) ^ getpid());
@@ -7756,17 +7758,16 @@ int main(int argc, char **argv)
     umask(server.umask = umask(0777));
 
     uint8_t hashseed[16];
-    getRandomBytes(hashseed, sizeof(hashseed));
-    dictSetHashFunctionSeed(hashseed);
+    getRandomBytes(hashseed, sizeof(hashseed)); // 生成一个 redis 的 run id. 十六进制
+    dictSetHashFunctionSeed(hashseed);          // 根据 run id, 设置 Dict, Set, Hash 函数的 seed
 
     char *exec_name = strrchr(argv[0], '/');
     if (exec_name == NULL)
         exec_name = argv[0];
-    server.sentinel_mode = checkForSentinelMode(argc, argv, exec_name);
-    initServerConfig();        // 初始化服务器配置
-    ACLInit();                 /* The ACL subsystem must be initialized ASAP because the
-                  basic networking code and client creation depends on it. */
-    moduleInitModulesSystem(); // 初始化模块系统
+    server.sentinel_mode = checkForSentinelMode(argc, argv, exec_name); // 检测是否是 sentinel mode（哨兵模式）
+    initServerConfig();                                                 // 初始化服务器配置
+    ACLInit();                                                          // The ACL subsystem must be initialized ASAP because the basic networking code and client creation depends on it.
+    moduleInitModulesSystem();                                          // 初始化模块系统
     tlsInit();
 
     /* Store the executable path and arguments in a safe place in order
@@ -7781,6 +7782,7 @@ int main(int argc, char **argv)
     /* We need to init sentinel right now as parsing the configuration file
      * in sentinel mode will have the effect of populating the sentinel
      * data structures with master nodes to monitor.
+     * 我们现在需要初始化哨兵，因为在哨兵模式下解析配置文件会产生用主节点填充哨兵数据结构以进行监视的效果。
      */
     if (server.sentinel_mode)
     {
@@ -7796,6 +7798,7 @@ int main(int argc, char **argv)
     else if (strstr(exec_name, "redis-check-aof") != NULL)
         redis_check_aof_main(argc, argv);
 
+    // 判断命令行选项参数
     if (argc >= 2)
     {
         j = 1; /* First option to parse in argv[] */
@@ -7894,18 +7897,18 @@ int main(int argc, char **argv)
 
     initServer(); // 初始化服务器
     if (background || server.pidfile)
-        createPidFile();
+        createPidFile(); // 根据需要创建 PID 文件
     if (server.set_proc_title)
-        redisSetProcTitle(NULL);
-    redisAsciiArt();
-    checkTcpBacklogSettings();
+        redisSetProcTitle(NULL); // 正式设置进程标题
+    redisAsciiArt();             // 输出 redis 的 ASCII 艺术字符
+    checkTcpBacklogSettings();   // 检查 tcp 的 backlog 配置
 
     if (!server.sentinel_mode)
     {
         /* Things not needed when running in Sentinel mode. */
         serverLog(LL_WARNING, "Server initialized");
 #ifdef __linux__
-        linuxMemoryWarnings();
+        linuxMemoryWarnings(); //  linux 相关的内存警告. 比如 overcommit, huge page 等
 #if defined(__arm64__)
         int ret;
         if ((ret = linuxMadvFreeForkBugCheck()))
@@ -7928,7 +7931,7 @@ int main(int argc, char **argv)
         moduleInitModulesSystemLast();
         moduleLoadFromQueue(); // 加载 module
         ACLLoadUsersAtStartup();
-        InitServerLast();
+        InitServerLast();   // 创建 BIO 线程以及 IO 线程等
         aofLoadManifestFromDisk();
         loadDataFromDisk(); // 加载 DB 文件
         aofOpenIfNeededOnServerStart();
@@ -7981,7 +7984,7 @@ int main(int argc, char **argv)
     redisSetCpuAffinity(server.server_cpulist);
     setOOMScoreAdj(-1);
 
-    aeMain(server.el);
+    aeMain(server.el); // 启动事件循环
     aeDeleteEventLoop(server.el);
     return 0;
 }

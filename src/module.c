@@ -12329,7 +12329,7 @@ void moduleRemoveConfigs(RedisModule *module)
  * We can't load modules directly when processing the configuration file
  * because the server must be fully initialized before loading modules.
  *
- * 加载服务器中的所有模块。 Loadmodule_queue列表，它由配置文件中的' loadmodule '指令填充。
+ * 加载服务器中的所有模块。 Loadmodule_queue 列表，它由配置文件中的 'loadmodule' 指令填充。
  * 我们不能在处理配置文件时直接加载模块，因为服务器必须在加载模块之前完全初始化。
  *
  * The function aborts the server on errors, since to start with missing
@@ -12553,8 +12553,7 @@ int moduleLoad(const char *path, void **module_argv, int module_argc, int is_loa
     selectDb(ctx.client, 0);
     if (onload((void *)&ctx, module_argv, module_argc) == REDISMODULE_ERR)
     {
-        serverLog(LL_WARNING,
-                  "Module %s initialization failed. Module not loaded", path);
+        serverLog(LL_WARNING, "Module %s initialization failed. Module not loaded", path);
         if (ctx.module)
         {
             moduleUnregisterCommands(ctx.module);

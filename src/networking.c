@@ -134,6 +134,7 @@ int authRequired(client *c)
     return auth_required;
 }
 
+// 创建 struct client. 对于每一个连接到 server 的 client 来说，都会为其创建一个 struct client
 client *createClient(connection *conn)
 {
     client *c = zmalloc(sizeof(client));
@@ -147,7 +148,7 @@ client *createClient(connection *conn)
         connEnableTcpNoDelay(conn);
         if (server.tcpkeepalive)
             connKeepAlive(conn, server.tcpkeepalive);
-        connSetReadHandler(conn, readQueryFromClient);
+        connSetReadHandler(conn, readQueryFromClient); // 设置 conn fd 的回调函数, conn fd 的 EPOLLIN 事件触发时会调用该回调函数
         connSetPrivateData(conn, c);
     }
     c->buf = zmalloc(PROTO_REPLY_CHUNK_BYTES);
@@ -1493,7 +1494,7 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip)
     }
 
     /* Create connection and client */
-    if ((c = createClient(conn)) == NULL)
+    if ((c = createClient(conn)) == NULL) // 创建 struct client，并设置 conn fd 的回调函数 readQueryFromClient
     {
         serverLog(LL_WARNING,
                   "Error registering fd event for the new client: %s (conn: %s)",
@@ -1513,6 +1514,9 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip)
      * 2. Schedule a future call to clientAcceptHandler().
      *
      * Because of that, we must do nothing else afterwards.
+     *
+     * 在这个接口的调用过程中，会将 conn->state 的状态改为 CONN_STATE_CONNECTED
+     * 实际上是在调用 clientAcceptHandler(conn)
      */
     if (connAccept(conn, clientAcceptHandler) == C_ERR)
     {
@@ -1526,6 +1530,7 @@ static void acceptCommonHandler(connection *conn, int flags, char *ip)
     }
 }
 
+// 监听 socket 的 EPOLLIN 事件处理函数
 void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask)
 {
     int cport, cfd, max = MAX_ACCEPTS_PER_CALL;
@@ -1536,7 +1541,7 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask)
 
     while (max--)
     {
-        cfd = anetTcpAccept(server.neterr, fd, cip, sizeof(cip), &cport);
+        cfd = anetTcpAccept(server.neterr, fd, cip, sizeof(cip), &cport); // 接收 client 连接，并返回 conn fd
         if (cfd == ANET_ERR)
         {
             if (errno != EWOULDBLOCK)
@@ -1545,6 +1550,8 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask)
             return;
         }
         serverLog(LL_VERBOSE, "Accepted %s:%d", cip, cport);
+        // 将连接 conn fd 加入到内核监听队列，并设置 conn fd 的 EPOLLIN 事件的回调函数
+        // （connCreateAcceptedSocket: 实例化 connection）
         acceptCommonHandler(connCreateAcceptedSocket(cfd), 0, cip);
     }
 }
@@ -1986,18 +1993,25 @@ void logInvalidUseAndFreeClientAsync(client *c, const char *fmt, ...)
  * wait until we're done with all clients. In other words can't wait until beforeSleep()
  * return C_ERR in case client is no longer valid after call.
  * The input client argument: c, may be NULL in case the previous client was
- * freed before the call. */
+ * freed before the call.
+ * 在继续处理下一个客户端之前执行客户端处理，这对于执行影响全局状态的操作很有用，但不能等到所有客户端处理完才执行。
+ * 换句话说，不能等到beforeSleep()返回C_ERR，以防客户端在调用后不再有效。 输入客户端参数:c，如果在调用之前释放了前一个客户端，则可以为NULL。
+ */
 int beforeNextClient(client *c)
 {
     /* Skip the client processing if we're in an IO thread, in that case we'll perform
        this operation later (this function is called again) in the fan-in stage of the threading mechanism */
+    // 如果在IO线程中，则跳过客户端处理，在这种情况下，我们将在线程机制的扇入阶段执行此操作(此函数将再次调用)
     if (io_threads_op != IO_THREADS_OP_IDLE)
         return C_OK;
     /* Handle async frees */
     /* Note: this doesn't make the server.clients_to_close list redundant because of
      * cases where we want an async free of a client other than myself. For example
      * in ACL modifications we disconnect clients authenticated to non-existent
-     * users (see ACL LOAD). */
+     * users (see ACL LOAD).
+     * 注意:这并不能使服务器 Clients_to_close 列表多余，因为在某些情况下，我们需要对除我之外的客户端进行异步释放。
+     * 例如，在ACL修改中，我们断开对不存在用户进行身份验证的客户端(参见ACL LOAD)。
+     **/
     if (c && (c->flags & CLIENT_CLOSE_ASAP))
     {
         freeClient(c);
@@ -2728,7 +2742,13 @@ int processMultibulkBuffer(client *c)
  *
  * 1. The client is reset unless there are reasons to avoid doing it.
  * 2. In the case of master clients, the replication offset is updated.
- * 3. Propagate commands we got from our master to replicas down the line. */
+ * 3. Propagate commands we got from our master to replicas down the line.
+ *
+ * 执行命令后执行必要的任务：
+ * 1. 重置客户端
+ * 2. 对于 master，更新复制的 offset
+ * 3. 将从 master 获取的命令传播到副本
+ **/
 void commandProcessed(client *c)
 {
     /* If client is blocked(including paused), just return avoid reset and replicate.
@@ -2780,11 +2800,12 @@ int processCommandAndResetClient(client *c)
     int deadclient = 0;
     client *old_client = server.current_client;
     server.current_client = c;
-    if (processCommand(c) == C_OK)
+    if (processCommand(c) == C_OK) // 执行命令
     {
         commandProcessed(c);
-        /* Update the client's memory to include output buffer growth following the
-         * processed command. */
+        /* Update the client's memory to include output buffer growth following the processed command.
+         * 更新客户机的内存。为了包括处理后的命令之后的输出缓冲区增长
+         */
         updateClientMemUsage(c);
     }
 
@@ -2865,6 +2886,7 @@ int processInputBuffer(client *c)
             break;
 
         /* Determine request type when unknown. */
+        // 根据协议的首字符，判断协议类型: 字符块数组类型，即 MULTIBULK，首字符是 "*"，否则请求为 INLINE 类型
         if (!c->reqtype)
         {
             if (c->querybuf[c->qb_pos] == '*')
@@ -2877,6 +2899,7 @@ int processInputBuffer(client *c)
             }
         }
 
+        // 协议解析完毕后，将请求参数个数存入 client 的 argc 中，将请求的具体参数存入 client 的 argv 中
         if (c->reqtype == PROTO_REQ_INLINE)
         {
             if (processInlineBuffer(c) != C_OK)
@@ -2910,6 +2933,7 @@ int processInputBuffer(client *c)
             }
 
             /* We are finally ready to execute the command. */
+            // 在这里执行命令
             if (processCommandAndResetClient(c) == C_ERR)
             {
                 /* If the client is no longer valid, we avoid exiting this
@@ -2950,13 +2974,16 @@ int processInputBuffer(client *c)
 
     /* Update client memory usage after processing the query buffer, this is
      * important in case the query buffer is big and wasn't drained during
-     * the above loop (because of partially sent big commands). */
+     * the above loop (because of partially sent big commands).
+     * 在处理完查询缓冲区后更新客户端内存使用情况，这在查询缓冲区很大并且在上述循环期间没有被耗尽的情况下是很重要的(因为部分发送了大的命令)。
+     **/
     if (io_threads_op == IO_THREADS_OP_IDLE)
         updateClientMemUsage(c);
 
     return C_OK;
 }
 
+// 连接 socket 的 EPOLLIN 事件处理函数
 void readQueryFromClient(connection *conn)
 {
     client *c = connGetPrivateData(conn);
@@ -3012,6 +3039,8 @@ void readQueryFromClient(connection *conn)
         /* Read as much as possible from the socket to save read(2) system calls. */
         readlen = sdsavail(c->querybuf);
     }
+
+    // 从 conn fd 中读取 client 的 command, 放到 client 的 querybuf 中
     nread = connRead(c->conn, c->querybuf + qblen, readlen);
     if (nread == -1)
     {
@@ -3061,7 +3090,7 @@ void readQueryFromClient(connection *conn)
 
     /* There is more data in the client input buffer, continue parsing it
      * and check if there is a full command to execute. */
-    if (processInputBuffer(c) == C_ERR)
+    if (processInputBuffer(c) == C_ERR) // 解析命令并执行
         c = NULL;
 
 done:
