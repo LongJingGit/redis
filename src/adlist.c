@@ -28,7 +28,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-
 #include <stdlib.h>
 #include "adlist.h"
 #include "zmalloc.h"
@@ -61,9 +60,11 @@ void listEmpty(list *list)
 
     current = list->head;
     len = list->len;
-    while(len--) {
+    while (len--)
+    {
         next = current->next;
-        if (list->free) list->free(current->value);
+        if (list->free)
+            list->free(current->value);
         zfree(current);
         current = next;
     }
@@ -93,10 +94,13 @@ list *listAddNodeHead(list *list, void *value)
     if ((node = zmalloc(sizeof(*node))) == NULL)
         return NULL;
     node->value = value;
-    if (list->len == 0) {
+    if (list->len == 0)
+    {
         list->head = list->tail = node;
         node->prev = node->next = NULL;
-    } else {
+    }
+    else
+    {
         node->prev = NULL;
         node->next = list->head;
         list->head->prev = node;
@@ -119,10 +123,13 @@ list *listAddNodeTail(list *list, void *value)
     if ((node = zmalloc(sizeof(*node))) == NULL)
         return NULL;
     node->value = value;
-    if (list->len == 0) {
+    if (list->len == 0)
+    {
         list->head = list->tail = node;
         node->prev = node->next = NULL;
-    } else {
+    }
+    else
+    {
         node->prev = list->tail;
         node->next = NULL;
         list->tail->next = node;
@@ -132,29 +139,37 @@ list *listAddNodeTail(list *list, void *value)
     return list;
 }
 
-list *listInsertNode(list *list, listNode *old_node, void *value, int after) {
+list *listInsertNode(list *list, listNode *old_node, void *value, int after)
+{
     listNode *node;
 
     if ((node = zmalloc(sizeof(*node))) == NULL)
         return NULL;
     node->value = value;
-    if (after) {
+    if (after)
+    {
         node->prev = old_node;
         node->next = old_node->next;
-        if (list->tail == old_node) {
+        if (list->tail == old_node)
+        {
             list->tail = node;
         }
-    } else {
+    }
+    else
+    {
         node->next = old_node;
         node->prev = old_node->prev;
-        if (list->head == old_node) {
+        if (list->head == old_node)
+        {
             list->head = node;
         }
     }
-    if (node->prev != NULL) {
+    if (node->prev != NULL)
+    {
         node->prev->next = node;
     }
-    if (node->next != NULL) {
+    if (node->next != NULL)
+    {
         node->next->prev = node;
     }
     list->len++;
@@ -175,7 +190,8 @@ void listDelNode(list *list, listNode *node)
         node->next->prev = node->prev;
     else
         list->tail = node->prev;
-    if (list->free) list->free(node->value);
+    if (list->free)
+        list->free(node->value);
     zfree(node);
     list->len--;
 }
@@ -188,7 +204,8 @@ listIter *listGetIterator(list *list, int direction)
 {
     listIter *iter;
 
-    if ((iter = zmalloc(sizeof(*iter))) == NULL) return NULL;
+    if ((iter = zmalloc(sizeof(*iter))) == NULL)
+        return NULL;
     if (direction == AL_START_HEAD)
         iter->next = list->head;
     else
@@ -198,17 +215,20 @@ listIter *listGetIterator(list *list, int direction)
 }
 
 /* Release the iterator memory */
-void listReleaseIterator(listIter *iter) {
+void listReleaseIterator(listIter *iter)
+{
     zfree(iter);
 }
 
 /* Create an iterator in the list private iterator structure */
-void listRewind(list *list, listIter *li) {
+void listRewind(list *list, listIter *li)
+{
     li->next = list->head;
     li->direction = AL_START_HEAD;
 }
 
-void listRewindTail(list *list, listIter *li) {
+void listRewindTail(list *list, listIter *li)
+{
     li->next = list->tail;
     li->direction = AL_START_TAIL;
 }
@@ -231,7 +251,8 @@ listNode *listNext(listIter *iter)
 {
     listNode *current = iter->next;
 
-    if (current != NULL) {
+    if (current != NULL)
+    {
         if (iter->direction == AL_START_HEAD)
             iter->next = current->next;
         else
@@ -260,22 +281,29 @@ list *listDup(list *orig)
     copy->free = orig->free;
     copy->match = orig->match;
     listRewind(orig, &iter);
-    while((node = listNext(&iter)) != NULL) {
+    while ((node = listNext(&iter)) != NULL)
+    {
         void *value;
 
-        if (copy->dup) {
+        if (copy->dup)
+        {
             value = copy->dup(node->value);
-            if (value == NULL) {
+            if (value == NULL)
+            {
                 listRelease(copy);
                 return NULL;
             }
-        } else {
+        }
+        else
+        {
             value = node->value;
         }
-        
-        if (listAddNodeTail(copy, value) == NULL) {
+
+        if (listAddNodeTail(copy, value) == NULL)
+        {
             /* Free value if dup succeed but listAddNodeTail failed. */
-            if (copy->free) copy->free(value);
+            if (copy->free)
+                copy->free(value);
 
             listRelease(copy);
             return NULL;
@@ -299,13 +327,19 @@ listNode *listSearchKey(list *list, void *key)
     listNode *node;
 
     listRewind(list, &iter);
-    while((node = listNext(&iter)) != NULL) {
-        if (list->match) {
-            if (list->match(node->value, key)) {
+    while ((node = listNext(&iter)) != NULL)
+    {
+        if (list->match)
+        {
+            if (list->match(node->value, key))
+            {
                 return node;
             }
-        } else {
-            if (key == node->value) {
+        }
+        else
+        {
+            if (key == node->value)
+            {
                 return node;
             }
         }
@@ -318,23 +352,31 @@ listNode *listSearchKey(list *list, void *key)
  * and so on. Negative integers are used in order to count
  * from the tail, -1 is the last element, -2 the penultimate
  * and so on. If the index is out of range NULL is returned. */
-listNode *listIndex(list *list, long index) {
+listNode *listIndex(list *list, long index)
+{
     listNode *n;
 
-    if (index < 0) {
-        index = (-index)-1;
+    if (index < 0)
+    {
+        index = (-index) - 1;
         n = list->tail;
-        while(index-- && n) n = n->prev;
-    } else {
+        while (index-- && n)
+            n = n->prev;
+    }
+    else
+    {
         n = list->head;
-        while(index-- && n) n = n->next;
+        while (index-- && n)
+            n = n->next;
     }
     return n;
 }
 
 /* Rotate the list removing the tail node and inserting it to the head. */
-void listRotateTailToHead(list *list) {
-    if (listLength(list) <= 1) return;
+void listRotateTailToHead(list *list)
+{
+    if (listLength(list) <= 1)
+        return;
 
     /* Detach current tail */
     listNode *tail = list->tail;
@@ -348,8 +390,10 @@ void listRotateTailToHead(list *list) {
 }
 
 /* Rotate the list removing the head node and inserting it to the tail. */
-void listRotateHeadToTail(list *list) {
-    if (listLength(list) <= 1) return;
+void listRotateHeadToTail(list *list)
+{
+    if (listLength(list) <= 1)
+        return;
 
     listNode *head = list->head;
     /* Detach current head */
@@ -364,8 +408,10 @@ void listRotateHeadToTail(list *list) {
 
 /* Add all the elements of the list 'o' at the end of the
  * list 'l'. The list 'other' remains empty but otherwise valid. */
-void listJoin(list *l, list *o) {
-    if (o->len == 0) return;
+void listJoin(list *l, list *o)
+{
+    if (o->len == 0)
+        return;
 
     o->head->prev = l->tail;
 
