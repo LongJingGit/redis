@@ -911,20 +911,25 @@ struct sharedObjectsStruct {
 };
 
 /* ZSETs use a specialized version of Skiplists */
-typedef struct zskiplistNode {
-    sds ele;
-    double score;
-    struct zskiplistNode *backward;
-    struct zskiplistLevel {
-        struct zskiplistNode *forward;
-        unsigned long span;
-    } level[];
+typedef struct zskiplistNode
+{
+    sds ele;                            // 当前节点所保存的字符串对象
+    double score;                       // 节点对应的分值。通过分值，跳表中的节点由小到大依次排列
+    struct zskiplistNode *backward;     // 指向当前节点前一个节点的指针（只能指向相邻节点，不能跨越多个节点）
+
+    // 每次创建一个跳跃表中的新节点的时候，会为这个节点生成随机的层数，层数越高，对应的概率越小；层数越低，生成的概率越大。层数上限为 ZSKIPLIST_MAXLEVEL
+    struct zskiplistLevel
+    {
+        struct zskiplistNode *forward;  // 前进指针：指向表尾方向的节点。每个节点指定层的前进指针指向下一个具有相同层数的节点（不一定是相邻节点）
+        unsigned long span;             // forward 指向的节点到当前节点的距离。数值越大，说明两个节点相距越远
+    } level[];                          // 节点中的层。每个节点一般有多层
 } zskiplistNode;
 
-typedef struct zskiplist {
-    struct zskiplistNode *header, *tail;
-    unsigned long length;
-    int level;
+typedef struct zskiplist
+{
+    struct zskiplistNode *header, *tail;        // 指向表头和表尾的节点
+    unsigned long length;   // 表示跳表的长度（跳表中不包含表头节点的节点数量）
+    int level;              // 当前跳表中，除表头节点之外的所有节点中，层数最大的那个节点的层数
 } zskiplist;
 
 typedef struct zset {

@@ -67,11 +67,15 @@ int zslLexValueGteMin(sds value, zlexrangespec *spec);
 int zslLexValueLteMax(sds value, zlexrangespec *spec);
 
 /* Create a skiplist node with the specified number of levels.
- * The SDS string 'ele' is referenced by the node after the call. */
+ * The SDS string 'ele' is referenced by the node after the call.
+ *
+ * level: 当前节点的层数。一般是使用 zslRandomLevel() 随机生成的。header 节点除外
+ * score: 该跳表节点的分值
+ * ele: 该跳表节点保存的数据
+ */
 zskiplistNode *zslCreateNode(int level, double score, sds ele)
 {
-    zskiplistNode *zn =
-        zmalloc(sizeof(*zn) + level * sizeof(struct zskiplistLevel));
+    zskiplistNode *zn = zmalloc(sizeof(*zn) + level * sizeof(struct zskiplistLevel));
     zn->score = score;
     zn->ele = ele;
     return zn;
@@ -86,7 +90,7 @@ zskiplist *zslCreate(void)
     zsl = zmalloc(sizeof(*zsl));
     zsl->level = 1;
     zsl->length = 0;
-    zsl->header = zslCreateNode(ZSKIPLIST_MAXLEVEL, 0, NULL);
+    zsl->header = zslCreateNode(ZSKIPLIST_MAXLEVEL, 0, NULL); // 先为跳表创建一个特殊的 header 结点，score 为 0，ele 为 nullptr
     for (j = 0; j < ZSKIPLIST_MAXLEVEL; j++)
     {
         zsl->header->level[j].forward = NULL;
@@ -99,7 +103,9 @@ zskiplist *zslCreate(void)
 
 /* Free the specified skiplist node. The referenced SDS string representation
  * of the element is freed too, unless node->ele is set to NULL before calling
- * this function. */
+ * this function.
+ * 释放一个跳表节点
+ **/
 void zslFreeNode(zskiplistNode *node)
 {
     sdsfree(node->ele);
