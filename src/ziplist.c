@@ -1357,7 +1357,7 @@ unsigned char *ziplistPush(unsigned char *zl, unsigned char *s, unsigned int sle
  * index is negative, the list is traversed back to front. When the list
  * doesn't contain an element at the provided index, NULL is returned.
  *
- * 从压缩链表 zl 中返回索引为 index 的节点指针
+ * 从压缩链表 zl 中返回索引为 index 的节点的指针
  * index 为正数时：表示从前向后遍历
  * index 为负数时：表示从后往前遍历
  */
@@ -1497,17 +1497,20 @@ unsigned char *ziplistInsert(unsigned char *zl, unsigned char *p, unsigned char 
  * ziplist, while deleting entries.
  *
  * 从压缩链表 zl 中删除 p 指向的节点，并返回新的压缩链表的指针
+ *
+ * zl: 压缩链表
+ * p: 指向压缩链表中的某一个数据节点 entry 的指针，删除该数据节点之后，将新的数据节点的指针赋给 p
  */
 unsigned char *ziplistDelete(unsigned char *zl, unsigned char **p)
 {
-    size_t offset = *p - zl;
-    zl = __ziplistDelete(zl, *p, 1);
+    size_t offset = *p - zl;         // 计算该数据节点 entry 在压缩链表 zl 中的偏移量
+    zl = __ziplistDelete(zl, *p, 1); // 从压缩链表中删除数据节点 p
 
     /* Store pointer to current element in p, because ziplistDelete will
      * do a realloc which might result in a different "zl"-pointer.
      * When the delete direction is back to front, we might delete the last
      * entry and end up with "p" pointing to ZIP_END, so check this. */
-    *p = zl + offset;
+    *p = zl + offset; // 计算偏移量为 offset 的新的数据节点 p
     return zl;
 }
 
