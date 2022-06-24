@@ -53,6 +53,7 @@ list *listCreate(void)
 }
 
 /* Remove all the elements from the list without destroying the list itself. */
+// 删除并释放链表中的所有节点，但是并不释放链表本身
 void listEmpty(list *list)
 {
     unsigned long len;

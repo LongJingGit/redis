@@ -37,7 +37,7 @@ typedef struct listNode
 {
     struct listNode *prev;
     struct listNode *next;
-    void *value;
+    void *value; // 指向节点保存的内存数据
 } listNode;
 
 typedef struct listIter
@@ -50,10 +50,10 @@ typedef struct list
 {
     listNode *head;
     listNode *tail;
-    void *(*dup)(void *ptr);
-    void (*free)(void *ptr);
-    int (*match)(void *ptr, void *key);
-    unsigned long len; // 维护链表的长度。不需要遍历就可以获得整个链表的长度
+    void *(*dup)(void *ptr);            // 节点拷贝函数的指针
+    void (*free)(void *ptr);            // 节点释放函数的指针
+    int (*match)(void *ptr, void *key); // 链表比较函数的指针
+    unsigned long len;                  // 维护链表的长度。不需要遍历就可以获得整个链表的长度
 } list;
 
 /* Functions implemented as macros */
