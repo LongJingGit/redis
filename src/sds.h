@@ -43,7 +43,10 @@ extern const char *SDS_NOINIT;
 typedef char *sds;
 
 /* Note: sdshdr5 is never used, we just access the flags byte directly.
- * However is here to document the layout of type 5 SDS strings. */
+ * However is here to document the layout of type 5 SDS strings.
+ *
+ * sdshdr5 最大可分配缓存为 1<<5
+ */
 struct __attribute__((__packed__)) sdshdr5
 {
     unsigned char flags; /* 3 lsb of type, and 5 msb of string length */ // 低三位保存 header 类型信息，高五位表示已经使用的缓存长度
@@ -53,13 +56,16 @@ struct __attribute__((__packed__)) sdshdr5
 /**
  * sds 变量实际上就是 sdshdr.buf，而因为整个 sdshdr 是一段连续分配的内存区域，所以可以通过 sds 变量向前偏移一个字节 sds[-1] 就是 flags 字段，
  * 通过位运算，就可以知道 sdshdr 的类型，然后通过指针偏移，就可以得到 sdshdr 的指针，然后获取整个头部信息
+ *
+ * sdshdr8 最大可分配的缓存为 1<<8. 根据实际要保存字符串的大小，选择合适的数据类型，可以达到节约内存的目的
  */
 struct __attribute__((__packed__)) sdshdr8
 {
     uint8_t len; /* used */                                       // 已经使用的缓存长度
-    uint8_t alloc; /* excluding the header and null terminator */ // 除了 header 和 nullptr 结束符之外分配的缓存长度
+    uint8_t alloc; /* excluding the header and null terminator */ // 表示除了 header 和 buf 中 nullptr 结束符之外分配的缓存长度
     unsigned char flags; /* 3 lsb of type, 5 unused bits */       // 低三位保存 header 类型信息
-    char buf[];                                                   // 动态分配的缓存，也是 sds 变量指向的地址
+
+    char buf[]; // 动态分配的缓存，也是 sds 变量指向的地址。保存真实的数据，且最后以 '\0' 结尾
 };
 
 struct __attribute__((__packed__)) sdshdr16
