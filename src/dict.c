@@ -562,6 +562,7 @@ void dictRelease(dict *d)
     zfree(d);                       // 释放 dict
 }
 
+// 根据 key 在 dict 中查找对应的 dictEntry 指针
 dictEntry *dictFind(dict *d, const void *key)
 {
     dictEntry *he;
