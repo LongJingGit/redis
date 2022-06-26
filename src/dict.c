@@ -496,6 +496,9 @@ int dictDelete(dict *ht, const void *key)
  * entry = dictUnlink(dictionary,entry);
  * // Do something with entry
  * dictFreeUnlinkedEntry(entry); // <- This does not need to lookup again.
+ *
+ * 将 key 对应的 entry 从哈希表 ht 中删除，但是并没有释放 entry 的内存，而是将 entry 返回给调用者，
+ * 由调用者使用 dictFreeUnlinkedEntry() 接口对 entry 进行释放。
  */
 dictEntry *dictUnlink(dict *ht, const void *key)
 {
@@ -503,7 +506,10 @@ dictEntry *dictUnlink(dict *ht, const void *key)
 }
 
 /* You need to call this function to really free the entry after a call
- * to dictUnlink(). It's safe to call this function with 'he' = NULL. */
+ * to dictUnlink(). It's safe to call this function with 'he' = NULL.
+ *
+ * 一般用于释放从 dictUnlink() 中删除的 entry
+ */
 void dictFreeUnlinkedEntry(dict *d, dictEntry *he)
 {
     if (he == NULL)
