@@ -40,140 +40,162 @@ int clientSubscriptionsCount(client *c);
  * message. However if the caller sets 'msg' as NULL, it will be able
  * to send a special message (for instance an Array type) by using the
  * addReply*() API family. */
-void addReplyPubsubMessage(client *c, robj *channel, robj *msg) {
+void addReplyPubsubMessage(client *c, robj *channel, robj *msg)
+{
     if (c->resp == 2)
-        addReply(c,shared.mbulkhdr[3]);
+        addReply(c, shared.mbulkhdr[3]);
     else
-        addReplyPushLen(c,3);
-    addReply(c,shared.messagebulk);
-    addReplyBulk(c,channel);
-    if (msg) addReplyBulk(c,msg);
+        addReplyPushLen(c, 3);
+    addReply(c, shared.messagebulk);
+    addReplyBulk(c, channel);
+    if (msg)
+        addReplyBulk(c, msg);
 }
 
 /* Send a pubsub message of type "pmessage" to the client. The difference
  * with the "message" type delivered by addReplyPubsubMessage() is that
  * this message format also includes the pattern that matched the message. */
-void addReplyPubsubPatMessage(client *c, robj *pat, robj *channel, robj *msg) {
+void addReplyPubsubPatMessage(client *c, robj *pat, robj *channel, robj *msg)
+{
     if (c->resp == 2)
-        addReply(c,shared.mbulkhdr[4]);
+        addReply(c, shared.mbulkhdr[4]);
     else
-        addReplyPushLen(c,4);
-    addReply(c,shared.pmessagebulk);
-    addReplyBulk(c,pat);
-    addReplyBulk(c,channel);
-    addReplyBulk(c,msg);
+        addReplyPushLen(c, 4);
+    addReply(c, shared.pmessagebulk);
+    addReplyBulk(c, pat);
+    addReplyBulk(c, channel);
+    addReplyBulk(c, msg);
 }
 
 /* Send the pubsub subscription notification to the client. */
-void addReplyPubsubSubscribed(client *c, robj *channel) {
+void addReplyPubsubSubscribed(client *c, robj *channel)
+{
     if (c->resp == 2)
-        addReply(c,shared.mbulkhdr[3]);
+        addReply(c, shared.mbulkhdr[3]);
     else
-        addReplyPushLen(c,3);
-    addReply(c,shared.subscribebulk);
-    addReplyBulk(c,channel);
-    addReplyLongLong(c,clientSubscriptionsCount(c));
+        addReplyPushLen(c, 3);
+    addReply(c, shared.subscribebulk);
+    addReplyBulk(c, channel);
+    addReplyLongLong(c, clientSubscriptionsCount(c));
 }
 
 /* Send the pubsub unsubscription notification to the client.
  * Channel can be NULL: this is useful when the client sends a mass
  * unsubscribe command but there are no channels to unsubscribe from: we
  * still send a notification. */
-void addReplyPubsubUnsubscribed(client *c, robj *channel) {
+void addReplyPubsubUnsubscribed(client *c, robj *channel)
+{
     if (c->resp == 2)
-        addReply(c,shared.mbulkhdr[3]);
+        addReply(c, shared.mbulkhdr[3]);
     else
-        addReplyPushLen(c,3);
-    addReply(c,shared.unsubscribebulk);
+        addReplyPushLen(c, 3);
+    addReply(c, shared.unsubscribebulk);
     if (channel)
-        addReplyBulk(c,channel);
+        addReplyBulk(c, channel);
     else
         addReplyNull(c);
-    addReplyLongLong(c,clientSubscriptionsCount(c));
+    addReplyLongLong(c, clientSubscriptionsCount(c));
 }
 
 /* Send the pubsub pattern subscription notification to the client. */
-void addReplyPubsubPatSubscribed(client *c, robj *pattern) {
+void addReplyPubsubPatSubscribed(client *c, robj *pattern)
+{
     if (c->resp == 2)
-        addReply(c,shared.mbulkhdr[3]);
+        addReply(c, shared.mbulkhdr[3]);
     else
-        addReplyPushLen(c,3);
-    addReply(c,shared.psubscribebulk);
-    addReplyBulk(c,pattern);
-    addReplyLongLong(c,clientSubscriptionsCount(c));
+        addReplyPushLen(c, 3);
+    addReply(c, shared.psubscribebulk);
+    addReplyBulk(c, pattern);
+    addReplyLongLong(c, clientSubscriptionsCount(c));
 }
 
 /* Send the pubsub pattern unsubscription notification to the client.
  * Pattern can be NULL: this is useful when the client sends a mass
  * punsubscribe command but there are no pattern to unsubscribe from: we
  * still send a notification. */
-void addReplyPubsubPatUnsubscribed(client *c, robj *pattern) {
+void addReplyPubsubPatUnsubscribed(client *c, robj *pattern)
+{
     if (c->resp == 2)
-        addReply(c,shared.mbulkhdr[3]);
+        addReply(c, shared.mbulkhdr[3]);
     else
-        addReplyPushLen(c,3);
-    addReply(c,shared.punsubscribebulk);
+        addReplyPushLen(c, 3);
+    addReply(c, shared.punsubscribebulk);
     if (pattern)
-        addReplyBulk(c,pattern);
+        addReplyBulk(c, pattern);
     else
         addReplyNull(c);
-    addReplyLongLong(c,clientSubscriptionsCount(c));
+    addReplyLongLong(c, clientSubscriptionsCount(c));
 }
 
 /*-----------------------------------------------------------------------------
  * Pubsub low level API
  *----------------------------------------------------------------------------*/
 
-void freePubsubPattern(void *p) {
+void freePubsubPattern(void *p)
+{
     pubsubPattern *pat = p;
 
     decrRefCount(pat->pattern);
     zfree(pat);
 }
 
-int listMatchPubsubPattern(void *a, void *b) {
+int listMatchPubsubPattern(void *a, void *b)
+{
     pubsubPattern *pa = a, *pb = b;
 
     return (pa->client == pb->client) &&
-           (equalStringObjects(pa->pattern,pb->pattern));
+           (equalStringObjects(pa->pattern, pb->pattern));
 }
 
 /* Return the number of channels + patterns a client is subscribed to. */
-int clientSubscriptionsCount(client *c) {
-    return dictSize(c->pubsub_channels)+
+int clientSubscriptionsCount(client *c)
+{
+    return dictSize(c->pubsub_channels) +
            listLength(c->pubsub_patterns);
 }
 
 /* Subscribe a client to a channel. Returns 1 if the operation succeeded, or
- * 0 if the client was already subscribed to that channel. */
-int pubsubSubscribeChannel(client *c, robj *channel) {
+ * 0 if the client was already subscribed to that channel.
+ *
+ * 订阅频道 channel
+ */
+int pubsubSubscribeChannel(client *c, robj *channel)
+{
     dictEntry *de;
     list *clients = NULL;
     int retval = 0;
 
     /* Add the channel to the client -> channels hash table */
-    if (dictAdd(c->pubsub_channels,channel,NULL) == DICT_OK) {
+    if (dictAdd(c->pubsub_channels, channel, NULL) == DICT_OK)      // 将 channel 作为 key 插入到 client.pubsub_channels 中
+    {
         retval = 1;
         incrRefCount(channel);
         /* Add the client to the channel -> list of clients hash table */
-        de = dictFind(server.pubsub_channels,channel);
-        if (de == NULL) {
-            clients = listCreate();
-            dictAdd(server.pubsub_channels,channel,clients);
+        de = dictFind(server.pubsub_channels, channel); // 在 redisServer.pubsub_channels 中查找该频道是否存在
+        if (de == NULL)
+        {
+            // redisServer.pubsub_channels 不存在该频道，说明该频道是一个新的订阅频道，将 channel-client 作为 key-value 保存到 pubsub_channels 中
+            clients = listCreate();     // 创建一个新的链表，用来存储订阅频道的客户端
+            dictAdd(server.pubsub_channels, channel, clients);
             incrRefCount(channel);
-        } else {
+        }
+        else
+        {
+            // redisServer.pubsub_channels 中已经有该频道，读取订阅该频道的客户端链表。也就是哈希表的 中 key 的 value 值
             clients = dictGetVal(de);
         }
-        listAddNodeTail(clients,c);
+
+        listAddNodeTail(clients, c);    // 将 client 加到客户端链表的尾部
     }
     /* Notify the client */
-    addReplyPubsubSubscribed(c,channel);
+    addReplyPubsubSubscribed(c, channel);
     return retval;
 }
 
 /* Unsubscribe a client from a channel. Returns 1 if the operation succeeded, or
  * 0 if the client was not subscribed to the specified channel. */
-int pubsubUnsubscribeChannel(client *c, robj *channel, int notify) {
+int pubsubUnsubscribeChannel(client *c, robj *channel, int notify)
+{
     dictEntry *de;
     list *clients;
     listNode *ln;
@@ -182,62 +204,73 @@ int pubsubUnsubscribeChannel(client *c, robj *channel, int notify) {
     /* Remove the channel from the client -> channels hash table */
     incrRefCount(channel); /* channel may be just a pointer to the same object
                             we have in the hash tables. Protect it... */
-    if (dictDelete(c->pubsub_channels,channel) == DICT_OK) {
+    if (dictDelete(c->pubsub_channels, channel) == DICT_OK)
+    {
         retval = 1;
         /* Remove the client from the channel -> clients list hash table */
-        de = dictFind(server.pubsub_channels,channel);
-        serverAssertWithInfo(c,NULL,de != NULL);
+        de = dictFind(server.pubsub_channels, channel);
+        serverAssertWithInfo(c, NULL, de != NULL);
         clients = dictGetVal(de);
-        ln = listSearchKey(clients,c);
-        serverAssertWithInfo(c,NULL,ln != NULL);
-        listDelNode(clients,ln);
-        if (listLength(clients) == 0) {
+        ln = listSearchKey(clients, c);
+        serverAssertWithInfo(c, NULL, ln != NULL);
+        listDelNode(clients, ln);
+        if (listLength(clients) == 0)
+        {
             /* Free the list and associated hash entry at all if this was
              * the latest client, so that it will be possible to abuse
              * Redis PUBSUB creating millions of channels. */
-            dictDelete(server.pubsub_channels,channel);
+            dictDelete(server.pubsub_channels, channel);
         }
     }
     /* Notify the client */
-    if (notify) addReplyPubsubUnsubscribed(c,channel);
+    if (notify)
+        addReplyPubsubUnsubscribed(c, channel);
     decrRefCount(channel); /* it is finally safe to release it */
     return retval;
 }
 
 /* Subscribe a client to a pattern. Returns 1 if the operation succeeded, or 0 if the client was already subscribed to that pattern. */
-int pubsubSubscribePattern(client *c, robj *pattern) {
+// 订阅一个模式
+int pubsubSubscribePattern(client *c, robj *pattern)
+{
     dictEntry *de;
     list *clients;
     int retval = 0;
 
-    if (listSearchKey(c->pubsub_patterns,pattern) == NULL) {
+    // 在客户端链表中查找 pattern 是否存在
+    if (listSearchKey(c->pubsub_patterns, pattern) == NULL)
+    {
         retval = 1;
         pubsubPattern *pat;
-        listAddNodeTail(c->pubsub_patterns,pattern);
+        listAddNodeTail(c->pubsub_patterns, pattern);   // 将订阅的模式数据添加到链表末尾
         incrRefCount(pattern);
         pat = zmalloc(sizeof(*pat));
         pat->pattern = getDecodedObject(pattern);
         pat->client = c;
-        listAddNodeTail(server.pubsub_patterns,pat);
+        listAddNodeTail(server.pubsub_patterns, pat);     // 将这个模式数据插入到服务器对应的链表中
         /* Add the client to the pattern -> list of clients hash table */
-        de = dictFind(server.pubsub_patterns_dict,pattern);
-        if (de == NULL) {
+        de = dictFind(server.pubsub_patterns_dict, pattern);
+        if (de == NULL)
+        {
             clients = listCreate();
-            dictAdd(server.pubsub_patterns_dict,pattern,clients);
+            dictAdd(server.pubsub_patterns_dict, pattern, clients);
             incrRefCount(pattern);
-        } else {
+        }
+        else
+        {
             clients = dictGetVal(de);
         }
-        listAddNodeTail(clients,c);
+        listAddNodeTail(clients, c);
     }
     /* Notify the client */
-    addReplyPubsubPatSubscribed(c,pattern);
+    addReplyPubsubPatSubscribed(c, pattern);
     return retval;
 }
 
 /* Unsubscribe a client from a channel. Returns 1 if the operation succeeded, or
  * 0 if the client was not subscribed to the specified channel. */
-int pubsubUnsubscribePattern(client *c, robj *pattern, int notify) {
+int pubsubUnsubscribePattern(client *c, robj *pattern, int notify)
+{
     dictEntry *de;
     list *clients;
     listNode *ln;
@@ -245,69 +278,80 @@ int pubsubUnsubscribePattern(client *c, robj *pattern, int notify) {
     int retval = 0;
 
     incrRefCount(pattern); /* Protect the object. May be the same we remove */
-    if ((ln = listSearchKey(c->pubsub_patterns,pattern)) != NULL) {
+    if ((ln = listSearchKey(c->pubsub_patterns, pattern)) != NULL)
+    {
         retval = 1;
-        listDelNode(c->pubsub_patterns,ln);
+        listDelNode(c->pubsub_patterns, ln);
         pat.client = c;
         pat.pattern = pattern;
-        ln = listSearchKey(server.pubsub_patterns,&pat);
-        listDelNode(server.pubsub_patterns,ln);
+        ln = listSearchKey(server.pubsub_patterns, &pat);
+        listDelNode(server.pubsub_patterns, ln);
         /* Remove the client from the pattern -> clients list hash table */
-        de = dictFind(server.pubsub_patterns_dict,pattern);
-        serverAssertWithInfo(c,NULL,de != NULL);
+        de = dictFind(server.pubsub_patterns_dict, pattern);
+        serverAssertWithInfo(c, NULL, de != NULL);
         clients = dictGetVal(de);
-        ln = listSearchKey(clients,c);
-        serverAssertWithInfo(c,NULL,ln != NULL);
-        listDelNode(clients,ln);
-        if (listLength(clients) == 0) {
+        ln = listSearchKey(clients, c);
+        serverAssertWithInfo(c, NULL, ln != NULL);
+        listDelNode(clients, ln);
+        if (listLength(clients) == 0)
+        {
             /* Free the list and associated hash entry at all if this was
              * the latest client. */
-            dictDelete(server.pubsub_patterns_dict,pattern);
+            dictDelete(server.pubsub_patterns_dict, pattern);
         }
     }
     /* Notify the client */
-    if (notify) addReplyPubsubPatUnsubscribed(c,pattern);
+    if (notify)
+        addReplyPubsubPatUnsubscribed(c, pattern);
     decrRefCount(pattern);
     return retval;
 }
 
 /* Unsubscribe from all the channels. Return the number of channels the
  * client was subscribed to. */
-int pubsubUnsubscribeAllChannels(client *c, int notify) {
+int pubsubUnsubscribeAllChannels(client *c, int notify)
+{
     dictIterator *di = dictGetSafeIterator(c->pubsub_channels);
     dictEntry *de;
     int count = 0;
 
-    while((de = dictNext(di)) != NULL) {
+    while ((de = dictNext(di)) != NULL)
+    {
         robj *channel = dictGetKey(de);
 
-        count += pubsubUnsubscribeChannel(c,channel,notify);
+        count += pubsubUnsubscribeChannel(c, channel, notify);
     }
     /* We were subscribed to nothing? Still reply to the client. */
-    if (notify && count == 0) addReplyPubsubUnsubscribed(c,NULL);
+    if (notify && count == 0)
+        addReplyPubsubUnsubscribed(c, NULL);
     dictReleaseIterator(di);
     return count;
 }
 
 /* Unsubscribe from all the patterns. Return the number of patterns the
  * client was subscribed from. */
-int pubsubUnsubscribeAllPatterns(client *c, int notify) {
+int pubsubUnsubscribeAllPatterns(client *c, int notify)
+{
     listNode *ln;
     listIter li;
     int count = 0;
 
-    listRewind(c->pubsub_patterns,&li);
-    while ((ln = listNext(&li)) != NULL) {
+    listRewind(c->pubsub_patterns, &li);
+    while ((ln = listNext(&li)) != NULL)
+    {
         robj *pattern = ln->value;
 
-        count += pubsubUnsubscribePattern(c,pattern,notify);
+        count += pubsubUnsubscribePattern(c, pattern, notify);
     }
-    if (notify && count == 0) addReplyPubsubPatUnsubscribed(c,NULL);
+    if (notify && count == 0)
+        addReplyPubsubPatUnsubscribed(c, NULL);
     return count;
 }
 
 /* Publish a message */
-int pubsubPublishMessage(robj *channel, robj *message) {
+// 向频道 channel 上发布消息 message
+int pubsubPublishMessage(robj *channel, robj *message)
+{
     int receivers = 0;
     dictEntry *de;
     dictIterator *di;
@@ -315,35 +359,42 @@ int pubsubPublishMessage(robj *channel, robj *message) {
     listIter li;
 
     /* Send to clients listening for that channel */
-    de = dictFind(server.pubsub_channels,channel);
-    if (de) {
+    de = dictFind(server.pubsub_channels, channel); // 找到订阅频道 channel 的客户端链表
+    if (de)
+    {
         list *list = dictGetVal(de);
         listNode *ln;
         listIter li;
 
-        listRewind(list,&li);
-        while ((ln = listNext(&li)) != NULL) {
+        listRewind(list, &li);
+        // 遍历整个客户端链表，将消息 message 发送给所有客户端
+        while ((ln = listNext(&li)) != NULL)
+        {
             client *c = ln->value;
-            addReplyPubsubMessage(c,channel,message);
+            addReplyPubsubMessage(c, channel, message);
             receivers++;
         }
     }
     /* Send to clients listening to matching channels */
     di = dictGetIterator(server.pubsub_patterns_dict);
-    if (di) {
+    if (di)
+    {
         channel = getDecodedObject(channel);
-        while((de = dictNext(di)) != NULL) {
+        while ((de = dictNext(di)) != NULL)
+        {
             robj *pattern = dictGetKey(de);
             list *clients = dictGetVal(de);
-            if (!stringmatchlen((char*)pattern->ptr,
+            if (!stringmatchlen((char *)pattern->ptr,
                                 sdslen(pattern->ptr),
-                                (char*)channel->ptr,
-                                sdslen(channel->ptr),0)) continue;
+                                (char *)channel->ptr,
+                                sdslen(channel->ptr), 0))
+                continue;
 
-            listRewind(clients,&li);
-            while ((ln = listNext(&li)) != NULL) {
+            listRewind(clients, &li);
+            while ((ln = listNext(&li)) != NULL)
+            {
                 client *c = listNodeValue(ln);
-                addReplyPubsubPatMessage(c,pattern,channel,message);
+                addReplyPubsubPatMessage(c, pattern, channel, message);
                 receivers++;
             }
         }
@@ -357,67 +408,82 @@ int pubsubPublishMessage(robj *channel, robj *message) {
  * Pubsub commands implementation
  *----------------------------------------------------------------------------*/
 
-void subscribeCommand(client *c) {
+void subscribeCommand(client *c)
+{
     int j;
 
     for (j = 1; j < c->argc; j++)
-        pubsubSubscribeChannel(c,c->argv[j]);
+        pubsubSubscribeChannel(c, c->argv[j]);
     c->flags |= CLIENT_PUBSUB;
 }
 
-void unsubscribeCommand(client *c) {
-    if (c->argc == 1) {
-        pubsubUnsubscribeAllChannels(c,1);
-    } else {
-        int j;
-
-        for (j = 1; j < c->argc; j++)
-            pubsubUnsubscribeChannel(c,c->argv[j],1);
+void unsubscribeCommand(client *c)
+{
+    if (c->argc == 1)
+    {
+        pubsubUnsubscribeAllChannels(c, 1);
     }
-    if (clientSubscriptionsCount(c) == 0) c->flags &= ~CLIENT_PUBSUB;
-}
-
-void psubscribeCommand(client *c) {
-    int j;
-
-    for (j = 1; j < c->argc; j++)
-        pubsubSubscribePattern(c,c->argv[j]);
-    c->flags |= CLIENT_PUBSUB;
-}
-
-void punsubscribeCommand(client *c) {
-    if (c->argc == 1) {
-        pubsubUnsubscribeAllPatterns(c,1);
-    } else {
-        int j;
-
-        for (j = 1; j < c->argc; j++)
-            pubsubUnsubscribePattern(c,c->argv[j],1);
-    }
-    if (clientSubscriptionsCount(c) == 0) c->flags &= ~CLIENT_PUBSUB;
-}
-
-void publishCommand(client *c) {
-    int receivers = pubsubPublishMessage(c->argv[1],c->argv[2]);
-    if (server.cluster_enabled)
-        clusterPropagatePublish(c->argv[1],c->argv[2]);
     else
-        forceCommandPropagation(c,PROPAGATE_REPL);
-    addReplyLongLong(c,receivers);
+    {
+        int j;
+
+        for (j = 1; j < c->argc; j++)
+            pubsubUnsubscribeChannel(c, c->argv[j], 1);
+    }
+    if (clientSubscriptionsCount(c) == 0)
+        c->flags &= ~CLIENT_PUBSUB;
+}
+
+void psubscribeCommand(client *c)
+{
+    int j;
+
+    for (j = 1; j < c->argc; j++)
+        pubsubSubscribePattern(c, c->argv[j]);
+    c->flags |= CLIENT_PUBSUB;
+}
+
+void punsubscribeCommand(client *c)
+{
+    if (c->argc == 1)
+    {
+        pubsubUnsubscribeAllPatterns(c, 1);
+    }
+    else
+    {
+        int j;
+
+        for (j = 1; j < c->argc; j++)
+            pubsubUnsubscribePattern(c, c->argv[j], 1);
+    }
+    if (clientSubscriptionsCount(c) == 0)
+        c->flags &= ~CLIENT_PUBSUB;
+}
+
+void publishCommand(client *c)
+{
+    int receivers = pubsubPublishMessage(c->argv[1], c->argv[2]);
+    if (server.cluster_enabled)
+        clusterPropagatePublish(c->argv[1], c->argv[2]);
+    else
+        forceCommandPropagation(c, PROPAGATE_REPL);
+    addReplyLongLong(c, receivers);
 }
 
 /* PUBSUB command for Pub/Sub introspection. */
-void pubsubCommand(client *c) {
-    if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"help")) {
+void pubsubCommand(client *c)
+{
+    if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr, "help"))
+    {
         const char *help[] = {
-"CHANNELS [<pattern>] -- Return the currently active channels matching a pattern (default: all).",
-"NUMPAT -- Return number of subscriptions to patterns.",
-"NUMSUB [channel-1 .. channel-N] -- Returns the number of subscribers for the specified channels (excluding patterns, default: none).",
-NULL
-        };
+            "CHANNELS [<pattern>] -- Return the currently active channels matching a pattern (default: all).",
+            "NUMPAT -- Return number of subscriptions to patterns.",
+            "NUMSUB [channel-1 .. channel-N] -- Returns the number of subscribers for the specified channels (excluding patterns, default: none).",
+            NULL};
         addReplyHelp(c, help);
-    } else if (!strcasecmp(c->argv[1]->ptr,"channels") &&
-        (c->argc == 2 || c->argc == 3))
+    }
+    else if (!strcasecmp(c->argv[1]->ptr, "channels") &&
+             (c->argc == 2 || c->argc == 3))
     {
         /* PUBSUB CHANNELS [<pattern>] */
         sds pat = (c->argc == 2) ? NULL : c->argv[2]->ptr;
@@ -427,34 +493,42 @@ NULL
         void *replylen;
 
         replylen = addReplyDeferredLen(c);
-        while((de = dictNext(di)) != NULL) {
+        while ((de = dictNext(di)) != NULL)
+        {
             robj *cobj = dictGetKey(de);
             sds channel = cobj->ptr;
 
             if (!pat || stringmatchlen(pat, sdslen(pat),
-                                       channel, sdslen(channel),0))
+                                       channel, sdslen(channel), 0))
             {
-                addReplyBulk(c,cobj);
+                addReplyBulk(c, cobj);
                 mblen++;
             }
         }
         dictReleaseIterator(di);
-        setDeferredArrayLen(c,replylen,mblen);
-    } else if (!strcasecmp(c->argv[1]->ptr,"numsub") && c->argc >= 2) {
+        setDeferredArrayLen(c, replylen, mblen);
+    }
+    else if (!strcasecmp(c->argv[1]->ptr, "numsub") && c->argc >= 2)
+    {
         /* PUBSUB NUMSUB [Channel_1 ... Channel_N] */
         int j;
 
-        addReplyArrayLen(c,(c->argc-2)*2);
-        for (j = 2; j < c->argc; j++) {
-            list *l = dictFetchValue(server.pubsub_channels,c->argv[j]);
+        addReplyArrayLen(c, (c->argc - 2) * 2);
+        for (j = 2; j < c->argc; j++)
+        {
+            list *l = dictFetchValue(server.pubsub_channels, c->argv[j]);
 
-            addReplyBulk(c,c->argv[j]);
-            addReplyLongLong(c,l ? listLength(l) : 0);
+            addReplyBulk(c, c->argv[j]);
+            addReplyLongLong(c, l ? listLength(l) : 0);
         }
-    } else if (!strcasecmp(c->argv[1]->ptr,"numpat") && c->argc == 2) {
+    }
+    else if (!strcasecmp(c->argv[1]->ptr, "numpat") && c->argc == 2)
+    {
         /* PUBSUB NUMPAT */
-        addReplyLongLong(c,listLength(server.pubsub_patterns));
-    } else {
+        addReplyLongLong(c, listLength(server.pubsub_patterns));
+    }
+    else
+    {
         addReplySubcommandSyntaxError(c);
     }
 }
