@@ -52,7 +52,9 @@ int checkBlockedClientTimeout(client *c, mstime_t now) {
  * The function gets the current time in milliseconds as argument since
  * it gets called multiple times in a loop, so calling gettimeofday() for
  * each iteration would be costly without any actual gain. */
-int clientsCronHandleTimeout(client *c, mstime_t now_ms) {
+// 检查 client 是否超时，如果超时，则尝试释放 client
+int clientsCronHandleTimeout(client *c, mstime_t now_ms)
+{
     time_t now = now_ms/1000;
 
     if (server.maxidletime &&
@@ -64,12 +66,15 @@ int clientsCronHandleTimeout(client *c, mstime_t now_ms) {
         (now - c->lastinteraction > server.maxidletime))
     {
         serverLog(LL_VERBOSE,"Closing idle client");
-        freeClient(c);
+        freeClient(c);  // client timeout, free client
         return 1;
-    } else if (c->flags & CLIENT_BLOCKED) {
+    }
+    else if (c->flags & CLIENT_BLOCKED)
+    {
         /* Cluster: handle unblock & redirect of clients blocked
          * into keys no longer served by this server. */
-        if (server.cluster_enabled) {
+        if (server.cluster_enabled)
+        {
             if (clusterRedirectBlockedClientIfNeeded(c))
                 unblockClient(c);
         }
