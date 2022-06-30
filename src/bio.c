@@ -162,8 +162,7 @@ void *bioProcessBackgroundJobs(void *arg)
     /* Check that the type is within the right interval. */
     if (type >= BIO_NUM_OPS)
     {
-        serverLog(LL_WARNING,
-                  "Warning: bio thread started with wrong type %lu", type);
+        serverLog(LL_WARNING, "Warning: bio thread started with wrong type %lu", type);
         return NULL;
     }
 
@@ -191,8 +190,7 @@ void *bioProcessBackgroundJobs(void *arg)
     sigemptyset(&sigset);
     sigaddset(&sigset, SIGALRM);
     if (pthread_sigmask(SIG_BLOCK, &sigset, NULL))
-        serverLog(LL_WARNING,
-                  "Warning: can't mask SIGALRM in bio.c thread: %s", strerror(errno));
+        serverLog(LL_WARNING, "Warning: can't mask SIGALRM in bio.c thread: %s", strerror(errno));
 
     // 主循环：不断从任务队列中读取任务，然后进行处理
     while (1)

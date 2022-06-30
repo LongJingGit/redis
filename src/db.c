@@ -1289,6 +1289,14 @@ void shutdownCommand(client *c)
     addReplyError(c, "Errors trying to SHUTDOWN. Check logs.");
 }
 
+/**
+ * 将 oldkey:c->argv[1]->ptr 重命名为 newkey:c->argv[2]->ptr
+ * nx == 1: 如果 newkey 已经存在，则不会重命名；否则将 oldkey 重命名为 newkey
+ * nx != 1: 如果 newkey 已经存在，会把 newkey 对应的 key 覆盖掉；如果不存在，将 oldkey 重命名为 newkey
+ * 基础逻辑：找到 oldkey 对应的 key-value，从主字典中删除，并将新的 newkey-value 插入主字典
+ *
+ * NOTE: nx == 1 对应着 RENAMENX 命令；nx != 1 对应着 RENAME 命令
+ */
 void renameGenericCommand(client *c, int nx)
 {
     robj *o;
@@ -1300,6 +1308,7 @@ void renameGenericCommand(client *c, int nx)
     if (sdscmp(c->argv[1]->ptr, c->argv[2]->ptr) == 0)
         samekey = 1;
 
+    // 查找 oldkey 对应的 value. c->argv[1] 为 key, 返回值 o 为 value
     if ((o = lookupKeyWriteOrReply(c, c->argv[1], shared.nokeyerr)) == NULL)
         return;
 
@@ -1310,9 +1319,10 @@ void renameGenericCommand(client *c, int nx)
     }
 
     incrRefCount(o);
-    expire = getExpire(c->db, c->argv[1]);
-    if (lookupKeyWrite(c->db, c->argv[2]) != NULL)
+    expire = getExpire(c->db, c->argv[1]);      // 读取 oldkey 的过期时间
+    if (lookupKeyWrite(c->db, c->argv[2]) != NULL)  // 查找 newkey 是否存在
     {
+        // 如果 newkey 已经存在并且 nx 为 1, 不会重命名
         if (nx)
         {
             decrRefCount(o);
@@ -1321,12 +1331,15 @@ void renameGenericCommand(client *c, int nx)
         }
         /* Overwrite: delete the old key before creating the new one
          * with the same name. */
-        dbDelete(c->db, c->argv[2]);
+        dbDelete(c->db, c->argv[2]);        // newkey 已经存在，删除 newkey
     }
-    dbAdd(c->db, c->argv[2], o);
+
+    dbAdd(c->db, c->argv[2], o);        // 向主字典中添加 newkey-value
     if (expire != -1)
-        setExpire(c, c->db, c->argv[2], expire);
-    dbDelete(c->db, c->argv[1]);
+        setExpire(c, c->db, c->argv[2], expire);        // 设置 newkey 的过期时间
+
+    dbDelete(c->db, c->argv[1]);        // 删除 oldkey
+
     signalModifiedKey(c, c->db, c->argv[1]);
     signalModifiedKey(c, c->db, c->argv[2]);
     notifyKeyspaceEvent(NOTIFY_GENERIC, "rename_from",
@@ -1347,7 +1360,7 @@ void renamenxCommand(client *c)
     renameGenericCommand(c, 1);
 }
 
-// 将 key 从当前 db 的主字典中一定到另一个 db 的主字典中
+// 将 key 从当前 db 的主字典中一定到另一个 db 的主字典中。基本逻辑为: 将 key 从当前 db 的主字典中取出，然后调用 dbAdd 接口添加到另一个 db 的主字典中
 void moveCommand(client *c)
 {
     robj *o;
@@ -1390,6 +1403,7 @@ void moveCommand(client *c)
         addReply(c, shared.czero);
         return;
     }
+
     expire = getExpire(c->db, c->argv[1]);
 
     /* Return zero if the key already exists in the target DB */
@@ -1398,6 +1412,7 @@ void moveCommand(client *c)
         addReply(c, shared.czero);
         return;
     }
+
     dbAdd(dst, c->argv[1], o);
     if (expire != -1)
         setExpire(c, dst, c->argv[1], expire);
