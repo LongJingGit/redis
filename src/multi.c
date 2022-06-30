@@ -32,7 +32,8 @@
 /* ================================ MULTI/EXEC ============================== */
 
 /* Client state initialization for MULTI/EXEC */
-void initClientMultiState(client *c) {
+void initClientMultiState(client *c)
+{
     c->mstate.commands = NULL;
     c->mstate.count = 0;
     c->mstate.cmd_flags = 0;
@@ -40,12 +41,14 @@ void initClientMultiState(client *c) {
 }
 
 /* Release all the resources associated with MULTI/EXEC state */
-void freeClientMultiState(client *c) {
+void freeClientMultiState(client *c)
+{
     int j;
 
-    for (j = 0; j < c->mstate.count; j++) {
+    for (j = 0; j < c->mstate.count; j++)
+    {
         int i;
-        multiCmd *mc = c->mstate.commands+j;
+        multiCmd *mc = c->mstate.commands + j;
 
         for (i = 0; i < mc->argc; i++)
             decrRefCount(mc->argv[i]);
@@ -55,7 +58,12 @@ void freeClientMultiState(client *c) {
 }
 
 /* Add a new command into the MULTI commands queue */
-void queueMultiCommand(client *c) {
+/**
+ * 具有 MULTI_CLIENT 状态的 client, 在接收到其他命令时，不会执行命令对应的处理函数，
+ * 而是将命令加入到 client 的事务命令缓存队列中，然后等待后续的 EXEC 命令提交事务
+ */
+void queueMultiCommand(client *c)
+{
     multiCmd *mc;
     int j;
 
@@ -66,62 +74,72 @@ void queueMultiCommand(client *c) {
     if (c->flags & CLIENT_DIRTY_EXEC)
         return;
 
-    c->mstate.commands = zrealloc(c->mstate.commands,
-            sizeof(multiCmd)*(c->mstate.count+1));
-    mc = c->mstate.commands+c->mstate.count;
+    c->mstate.commands = zrealloc(c->mstate.commands, sizeof(multiCmd) * (c->mstate.count + 1));
+    mc = c->mstate.commands + c->mstate.count;
     mc->cmd = c->cmd;
     mc->argc = c->argc;
-    mc->argv = zmalloc(sizeof(robj*)*c->argc);
-    memcpy(mc->argv,c->argv,sizeof(robj*)*c->argc);
+    mc->argv = zmalloc(sizeof(robj *) * c->argc);
+    memcpy(mc->argv, c->argv, sizeof(robj *) * c->argc);
+
     for (j = 0; j < c->argc; j++)
         incrRefCount(mc->argv[j]);
+
     c->mstate.count++;
     c->mstate.cmd_flags |= c->cmd->flags;
     c->mstate.cmd_inv_flags |= ~c->cmd->flags;
 }
 
-void discardTransaction(client *c) {
+void discardTransaction(client *c)
+{
     freeClientMultiState(c);
     initClientMultiState(c);
-    c->flags &= ~(CLIENT_MULTI|CLIENT_DIRTY_CAS|CLIENT_DIRTY_EXEC);
+    c->flags &= ~(CLIENT_MULTI | CLIENT_DIRTY_CAS | CLIENT_DIRTY_EXEC);
     unwatchAllKeys(c);
 }
 
 /* Flag the transaction as DIRTY_EXEC so that EXEC will fail.
  * Should be called every time there is an error while queueing a command. */
-void flagTransaction(client *c) {
+void flagTransaction(client *c)
+{
     if (c->flags & CLIENT_MULTI)
         c->flags |= CLIENT_DIRTY_EXEC;
 }
 
-void multiCommand(client *c) {
-    if (c->flags & CLIENT_MULTI) {
-        addReplyError(c,"MULTI calls can not be nested");
+// client 执行 MULTI 命令, 实际上是为 client.flags 设置 CLIENT_MULTI 状态标记
+void multiCommand(client *c)
+{
+    if (c->flags & CLIENT_MULTI)
+    {
+        addReplyError(c, "MULTI calls can not be nested");
         return;
     }
     c->flags |= CLIENT_MULTI;
-    addReply(c,shared.ok);
+    addReply(c, shared.ok);
 }
 
-void discardCommand(client *c) {
-    if (!(c->flags & CLIENT_MULTI)) {
-        addReplyError(c,"DISCARD without MULTI");
+void discardCommand(client *c)
+{
+    if (!(c->flags & CLIENT_MULTI))
+    {
+        addReplyError(c, "DISCARD without MULTI");
         return;
     }
     discardTransaction(c);
-    addReply(c,shared.ok);
+    addReply(c, shared.ok);
 }
 
 /* Send a MULTI command to all the slaves and AOF file. Check the execCommand
  * implementation for more information. */
-void execCommandPropagateMulti(client *c) {
-    propagate(server.multiCommand,c->db->id,&shared.multi,1,
-              PROPAGATE_AOF|PROPAGATE_REPL);
+void execCommandPropagateMulti(client *c)
+{
+    propagate(server.multiCommand, c->db->id, &shared.multi, 1,
+              PROPAGATE_AOF | PROPAGATE_REPL);
 }
 
-void execCommandPropagateExec(client *c) {
-    propagate(server.execCommand,c->db->id,&shared.exec,1,
-              PROPAGATE_AOF|PROPAGATE_REPL);
+void execCommandPropagateExec(client *c)
+{
+    propagate(server.execCommand, c->db->id, &shared.exec, 1,
+              PROPAGATE_AOF | PROPAGATE_REPL);
 }
 
 /* Aborts a transaction, with a specific error message.
@@ -129,20 +147,24 @@ void execCommandPropagateExec(client *c) {
  * the server exited the multi state, but the actual reason for the abort is
  * included too.
  * Note: 'error' may or may not end with \r\n. see addReplyErrorFormat. */
-void execCommandAbort(client *c, sds error) {
+void execCommandAbort(client *c, sds error)
+{
     discardTransaction(c);
 
-    if (error[0] == '-') error++;
+    if (error[0] == '-')
+        error++;
     addReplyErrorFormat(c, "-EXECABORT Transaction discarded because of: %s", error);
 
     /* Send EXEC to clients waiting data from MONITOR. We did send a MULTI
      * already, and didn't send any of the queued commands, now we'll just send
      * EXEC so it is clear that the transaction is over. */
     if (listLength(server.monitors) && !server.loading)
-        replicationFeedMonitors(c,server.monitors,c->db->id,c->argv,c->argc);
+        replicationFeedMonitors(c, server.monitors, c->db->id, c->argv, c->argc);
 }
 
-void execCommand(client *c) {
+// 执行 EXEC 命令, 提交事务, 一次性的执行事务命令缓存队列中的所有命令
+void execCommand(client *c)
+{
     int j;
     robj **orig_argv;
     int orig_argc;
@@ -150,13 +172,15 @@ void execCommand(client *c) {
     int must_propagate = 0; /* Need to propagate MULTI/EXEC to AOF / slaves? */
     int was_master = server.masterhost == NULL;
 
-    if (!(c->flags & CLIENT_MULTI)) {
-        addReplyError(c,"EXEC without MULTI");
+    if (!(c->flags & CLIENT_MULTI))
+    {
+        addReplyError(c, "EXEC without MULTI");
         return;
     }
 
     /* EXEC with expired watched key is disallowed*/
-    if (isWatchedKeyExpired(c)) {
+    if (isWatchedKeyExpired(c))
+    {
         c->flags |= (CLIENT_DIRTY_CAS);
     }
 
@@ -166,9 +190,9 @@ void execCommand(client *c) {
      * A failed EXEC in the first case returns a multi bulk nil object
      * (technically it is not an error but a special behavior), while
      * in the second an EXECABORT error is returned. */
-    if (c->flags & (CLIENT_DIRTY_CAS|CLIENT_DIRTY_EXEC)) {
-        addReply(c, c->flags & CLIENT_DIRTY_EXEC ? shared.execaborterr :
-                                                   shared.nullarray[c->resp]);
+    if (c->flags & (CLIENT_DIRTY_CAS | CLIENT_DIRTY_EXEC))
+    {
+        addReply(c, c->flags & CLIENT_DIRTY_EXEC ? shared.execaborterr : shared.nullarray[c->resp]);
         discardTransaction(c);
         goto handle_monitor;
     }
@@ -178,8 +202,9 @@ void execCommand(client *c) {
     orig_argv = c->argv;
     orig_argc = c->argc;
     orig_cmd = c->cmd;
-    addReplyArrayLen(c,c->mstate.count);
-    for (j = 0; j < c->mstate.count; j++) {
+    addReplyArrayLen(c, c->mstate.count);
+    for (j = 0; j < c->mstate.count; j++)       // 遍历命令，依次执行
+    {
         c->argc = c->mstate.commands[j].argc;
         c->argv = c->mstate.commands[j].argv;
         c->cmd = c->mstate.commands[j].cmd;
@@ -191,26 +216,27 @@ void execCommand(client *c) {
          * and atomicity guarantees. */
         if (!must_propagate &&
             !server.loading &&
-            !(c->cmd->flags & (CMD_READONLY|CMD_ADMIN)))
+            !(c->cmd->flags & (CMD_READONLY | CMD_ADMIN)))
         {
             execCommandPropagateMulti(c);
             must_propagate = 1;
         }
 
         int acl_keypos;
-        int acl_retval = ACLCheckCommandPerm(c,&acl_keypos);
-        if (acl_retval != ACL_OK) {
-            addACLLogEntry(c,acl_retval,acl_keypos,NULL);
+        int acl_retval = ACLCheckCommandPerm(c, &acl_keypos);
+        if (acl_retval != ACL_OK)
+        {
+            addACLLogEntry(c, acl_retval, acl_keypos, NULL);
             addReplyErrorFormat(c,
-                "-NOPERM ACLs rules changed between the moment the "
-                "transaction was accumulated and the EXEC call. "
-                "This command is no longer allowed for the "
-                "following reason: %s",
-                (acl_retval == ACL_DENIED_CMD) ?
-                "no permission to execute the command or subcommand" :
-                "no permission to touch the specified keys");
-        } else {
-            call(c,server.loading ? CMD_CALL_NONE : CMD_CALL_FULL);
+                                "-NOPERM ACLs rules changed between the moment the "
+                                "transaction was accumulated and the EXEC call. "
+                                "This command is no longer allowed for the "
+                                "following reason: %s",
+                                (acl_retval == ACL_DENIED_CMD) ? "no permission to execute the command or subcommand" : "no permission to touch the specified keys");
+        }
+        else
+        {
+            call(c, server.loading ? CMD_CALL_NONE : CMD_CALL_FULL);
         }
 
         /* Commands may alter argc/argv, restore mstate. */
@@ -225,7 +251,8 @@ void execCommand(client *c) {
 
     /* Make sure the EXEC command will be propagated as well if MULTI
      * was already propagated. */
-    if (must_propagate) {
+    if (must_propagate)
+    {
         int is_master = server.masterhost == NULL;
         server.dirty++;
         /* If inside the MULTI/EXEC block this instance was suddenly
@@ -233,9 +260,10 @@ void execCommand(client *c) {
          * initial MULTI was propagated into the replication backlog, but the
          * rest was not. We need to make sure to at least terminate the
          * backlog with the final EXEC. */
-        if (server.repl_backlog && was_master && !is_master) {
+        if (server.repl_backlog && was_master && !is_master)
+        {
             char *execcmd = "*1\r\n$4\r\nEXEC\r\n";
-            feedReplicationBacklog(execcmd,strlen(execcmd));
+            feedReplicationBacklog(execcmd, strlen(execcmd));
         }
     }
 
@@ -246,7 +274,7 @@ handle_monitor:
      * Instead EXEC is flagged as CMD_SKIP_MONITOR in the command
      * table, and we do it here with correct ordering. */
     if (listLength(server.monitors) && !server.loading)
-        replicationFeedMonitors(c,server.monitors,c->db->id,c->argv,c->argc);
+        replicationFeedMonitors(c, server.monitors, c->db->id, c->argv, c->argc);
 }
 
 /* ===================== WATCH (CAS alike for MULTI/EXEC) ===================
@@ -261,50 +289,57 @@ handle_monitor:
 /* In the client->watched_keys list we need to use watchedKey structures
  * as in order to identify a key in Redis we need both the key name and the
  * DB */
-typedef struct watchedKey {
+typedef struct watchedKey
+{
     robj *key;
     redisDb *db;
 } watchedKey;
 
 /* Watch for the specified key */
-void watchForKey(client *c, robj *key) {
+void watchForKey(client *c, robj *key)
+{
     list *clients = NULL;
     listIter li;
     listNode *ln;
     watchedKey *wk;
 
     /* Check if we are already watching for this key */
-    listRewind(c->watched_keys,&li);
-    while((ln = listNext(&li))) {
+    listRewind(c->watched_keys, &li);
+    while ((ln = listNext(&li)))
+    {
         wk = listNodeValue(ln);
-        if (wk->db == c->db && equalStringObjects(key,wk->key))
+        if (wk->db == c->db && equalStringObjects(key, wk->key))
             return; /* Key already watched */
     }
     /* This key is not already watched in this DB. Let's add it */
-    clients = dictFetchValue(c->db->watched_keys,key);
-    if (!clients) {
+    clients = dictFetchValue(c->db->watched_keys, key);
+    if (!clients)
+    {
         clients = listCreate();
-        dictAdd(c->db->watched_keys,key,clients);
+        dictAdd(c->db->watched_keys, key, clients);
         incrRefCount(key);
     }
-    listAddNodeTail(clients,c);
+    listAddNodeTail(clients, c);
     /* Add the new key to the list of keys watched by this client */
     wk = zmalloc(sizeof(*wk));
     wk->key = key;
     wk->db = c->db;
     incrRefCount(key);
-    listAddNodeTail(c->watched_keys,wk);
+    listAddNodeTail(c->watched_keys, wk);
 }
 
 /* Unwatch all the keys watched by this client. To clean the EXEC dirty
  * flag is up to the caller. */
-void unwatchAllKeys(client *c) {
+void unwatchAllKeys(client *c)
+{
     listIter li;
     listNode *ln;
 
-    if (listLength(c->watched_keys) == 0) return;
-    listRewind(c->watched_keys,&li);
-    while((ln = listNext(&li))) {
+    if (listLength(c->watched_keys) == 0)
+        return;
+    listRewind(c->watched_keys, &li);
+    while ((ln = listNext(&li)))
+    {
         list *clients;
         watchedKey *wk;
 
@@ -312,13 +347,13 @@ void unwatchAllKeys(client *c) {
          * from the list */
         wk = listNodeValue(ln);
         clients = dictFetchValue(wk->db->watched_keys, wk->key);
-        serverAssertWithInfo(c,NULL,clients != NULL);
-        listDelNode(clients,listSearchKey(clients,c));
+        serverAssertWithInfo(c, NULL, clients != NULL);
+        listDelNode(clients, listSearchKey(clients, c));
         /* Kill the entry at all if this was the only client */
         if (listLength(clients) == 0)
             dictDelete(wk->db->watched_keys, wk->key);
         /* Remove this watched key from the client->watched list */
-        listDelNode(c->watched_keys,ln);
+        listDelNode(c->watched_keys, ln);
         decrRefCount(wk->key);
         zfree(wk);
     }
@@ -326,35 +361,48 @@ void unwatchAllKeys(client *c) {
 
 /* iterates over the watched_keys list and
  * look for an expired key . */
-int isWatchedKeyExpired(client *c) {
+int isWatchedKeyExpired(client *c)
+{
     listIter li;
     listNode *ln;
     watchedKey *wk;
-    if (listLength(c->watched_keys) == 0) return 0;
-    listRewind(c->watched_keys,&li);
-    while ((ln = listNext(&li))) {
+    if (listLength(c->watched_keys) == 0)
+        return 0;
+    listRewind(c->watched_keys, &li);
+    while ((ln = listNext(&li)))
+    {
         wk = listNodeValue(ln);
-        if (keyIsExpired(wk->db, wk->key)) return 1;
+        if (keyIsExpired(wk->db, wk->key))
+            return 1;
     }
 
     return 0;
 }
 
 /* "Touch" a key, so that if this key is being WATCHed by some client the
- * next EXEC will fail. */
-void touchWatchedKey(redisDb *db, robj *key) {
+ * next EXEC will fail.
+ * 当有其他 client 通过命令修改当前 client db 中的某个 key 时，如果该 key 刚好在 redisDb.watched_keys 中,
+ * 则表明该 key 被若干个 client 的事务所监控, 对于这种情况, 就需要遍历 redisDb.watched_keys[key] 这个链表中的所有的客户端对象，
+ * 为客户端设置 CLIENT_DIRTY_CAS，表明这个客户端所监控的键已经被其他客户端所修改
+ */
+void touchWatchedKey(redisDb *db, robj *key)
+{
     list *clients;
     listIter li;
     listNode *ln;
 
-    if (dictSize(db->watched_keys) == 0) return;
+    if (dictSize(db->watched_keys) == 0)
+        return;
+
     clients = dictFetchValue(db->watched_keys, key);
-    if (!clients) return;
+    if (!clients)
+        return;
 
     /* Mark all the clients watching this key as CLIENT_DIRTY_CAS */
     /* Check if we are already watching for this key */
-    listRewind(clients,&li);
-    while((ln = listNext(&li))) {
+    listRewind(clients, &li);
+    while ((ln = listNext(&li)))
+    {
         client *c = listNodeValue(ln);
 
         c->flags |= CLIENT_DIRTY_CAS;
@@ -368,24 +416,32 @@ void touchWatchedKey(redisDb *db, robj *key) {
  * replaced_with: for SWAPDB, the WATCH should be invalidated if
  * the key exists in either of them, and skipped only if it
  * doesn't exist in both. */
-void touchAllWatchedKeysInDb(redisDb *emptied, redisDb *replaced_with) {
+void touchAllWatchedKeysInDb(redisDb *emptied, redisDb *replaced_with)
+{
     listIter li;
     listNode *ln;
     dictEntry *de;
 
-    if (dictSize(emptied->watched_keys) == 0) return;
+    if (dictSize(emptied->watched_keys) == 0)
+        return;
 
     dictIterator *di = dictGetSafeIterator(emptied->watched_keys);
-    while((de = dictNext(di)) != NULL) {
+    while ((de = dictNext(di)) != NULL)
+    {
         robj *key = dictGetKey(de);
         list *clients = dictGetVal(de);
-        if (!clients) continue;
-        listRewind(clients,&li);
-        while((ln = listNext(&li))) {
+        if (!clients)
+            continue;
+        listRewind(clients, &li);
+        while ((ln = listNext(&li)))
+        {
             client *c = listNodeValue(ln);
-            if (dictFind(emptied->dict, key->ptr)) {
+            if (dictFind(emptied->dict, key->ptr))
+            {
                 c->flags |= CLIENT_DIRTY_CAS;
-            } else if (replaced_with && dictFind(replaced_with->dict, key->ptr)) {
+            }
+            else if (replaced_with && dictFind(replaced_with->dict, key->ptr))
+            {
                 c->flags |= CLIENT_DIRTY_CAS;
             }
         }
@@ -393,20 +449,26 @@ void touchAllWatchedKeysInDb(redisDb *emptied, redisDb *replaced_with) {
     dictReleaseIterator(di);
 }
 
-void watchCommand(client *c) {
+// 执行 WATCH 命令: 将命令添加到 client.watched_keys 和 redisDb.watched_keys 中
+void watchCommand(client *c)
+{
     int j;
 
-    if (c->flags & CLIENT_MULTI) {
-        addReplyError(c,"WATCH inside MULTI is not allowed");
+    if (c->flags & CLIENT_MULTI)
+    {
+        addReplyError(c, "WATCH inside MULTI is not allowed");
         return;
     }
+
     for (j = 1; j < c->argc; j++)
-        watchForKey(c,c->argv[j]);
-    addReply(c,shared.ok);
+        watchForKey(c, c->argv[j]);
+
+    addReply(c, shared.ok);
 }
 
-void unwatchCommand(client *c) {
+void unwatchCommand(client *c)
+{
     unwatchAllKeys(c);
     c->flags &= (~CLIENT_DIRTY_CAS);
-    addReply(c,shared.ok);
+    addReply(c, shared.ok);
 }
