@@ -1771,7 +1771,7 @@ void databasesCron(void)
     {
         if (iAmMaster())
         {
-            activeExpireCycle(ACTIVE_EXPIRE_CYCLE_SLOW);
+            activeExpireCycle(ACTIVE_EXPIRE_CYCLE_SLOW); // 尝试清理过期 key
         }
         else
         {
@@ -1941,8 +1941,20 @@ void checkChildrenDone(void)
  * Everything directly called here will be called server.hz times per second,
  * so in order to throttle execution of things we want to do less frequently
  * a macro is used: run_with_period(milliseconds) { .... }
+ *
+ * 1. 负责服务器运行时数据的刷新工作. 包括调用 updateCachedTime 接口来缓存当前的系统时间戳，这样一来当其他模块需要读取系统时间时，便不需要通过 time 系统调用来获取；另外系统的 LRU 时间戳的刷新也是在这个接口中完成的
+ * 2. 调用 clientsCron 来处理客户端心跳，其中的逻辑包含：
+ *    2.1 调用 ClientsCronHandleTimeout 来处理长期没有数据交互的客户端对象；以及处于阻塞状态时间过长没有就绪的客户端对象
+ *    2.2 调用 ClientsCronResizeQueryBuffer 来清理客户端的应用层读缓存用于释放空闲的内存空间
+ *    2.3 调用 ClientsCronTrackExpansiveClients 来处理追踪那些占用内存过高的客户端对象
+ * 3. 调用 databasesCron 来处理键空间心跳:
+ *    3.1 调用 activeExpireCycle 来清理过期 key
+ *    3.2 调用 tryResizeHashTables 尝试对 db 进行 rehash
+ *    3.3 调用 incrementallyRehash 对扩容的键空间的大哈希表进行增量的重哈希数据迁移
+ * 4. 检测生成 RDB 文件以及重写 AOF 文件的后台子进程的运行情况, 在子进程结束时，通过 backgroundSaveDoneHandler 和 backgroundRewriteDoneHandle 回调函数来对后续的工作进行处理
+ * 5. 在没有后台子进程生成 RDB 文件或者重写 AOF 文件的情况下，检测是否满足生成 RDB 文件以及重写 AOF 文件的条件；如果条件满足，则通过对应的函数接口来启动后台子进程处理相关逻辑
+ * 6. 调用 replicationCron 来处理主从复制功能的心跳
  */
-
 int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData)
 {
     int j;
@@ -1963,8 +1975,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData)
      * many clients, we want to call serverCron() with an higher frequency. */
     if (server.dynamic_hz)
     {
-        while (listLength(server.clients) / server.hz >
-               MAX_CLIENTS_PER_CLOCK_TICK)
+        while (listLength(server.clients) / server.hz > MAX_CLIENTS_PER_CLOCK_TICK)
         {
             server.hz *= 2;
             if (server.hz > CONFIG_MAX_HZ)
@@ -2073,7 +2084,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData)
     }
 
     /* We need to do a few operations on clients asynchronously. */
-    clientsCron();
+    clientsCron();  // 在这里会计算每个 client 的空闲时间，如果超时，将尝试释放 client
 
     /* Handle background operations on Redis databases. */
     databasesCron();
@@ -2229,7 +2240,14 @@ extern int ProcessingEventsWhileBlocked;
  * keys), but we do need to perform some actions.
  *
  * The most important is freeClientsInAsyncFreeQueue but we also
- * call some other low-risk functions. */
+ * call some other low-risk functions.
+ *
+ * 进入事件循环的回调: redis 在每次进入事件循环 aeProcessEvents-->aeApiPoll 之前, 都会调用该接口:
+ * 1. 阻塞的 client 被解锁时, 完成后续的处理工作 -- processUnblockClients
+ * 2. 刷新 AOF 文件，将内核缓冲区中的数据写入磁盘 -- flushAppendOnlyFile
+ * 3. 尝试将 redisServer.clients_pending_write 中 client 输出缓存区的数据发送到网络上 -- handleClientsWithPendingWrites
+ * 4. 尝试处理 redisServer.clients_pending_read 中的每个挂起的 client 的读操作
+ */
 void beforeSleep(struct aeEventLoop *eventLoop)
 {
     UNUSED(eventLoop);
@@ -2319,7 +2337,7 @@ void beforeSleep(struct aeEventLoop *eventLoop)
     flushAppendOnlyFile(0);
 
     /* Handle writes with pending output buffers. */
-    handleClientsWithPendingWritesUsingThreads();
+    handleClientsWithPendingWritesUsingThreads();   // 尝试将 client 的输出缓冲区的数据发送出去
 
     /* Close clients that need to be closed asynchronous */
     freeClientsInAsyncFreeQueue();
@@ -2476,6 +2494,7 @@ void createSharedObjects(void)
     shared.maxstring = sdsnew("maxstring");
 }
 
+// 服务器配置初始化. 还会调用 populateCommandTable 接口，遍历命令表 redisCommandTable，将命令插入到 redisServer.commands 中
 void initServerConfig(void)
 {
     int j;
@@ -2576,7 +2595,7 @@ void initServerConfig(void)
      * redis.conf using the rename-command directive. */
     server.commands = dictCreate(&commandTableDictType, NULL);
     server.orig_commands = dictCreate(&commandTableDictType, NULL);
-    populateCommandTable();
+    populateCommandTable();    // 将 redisCommandTable 中的命令信息插入到 redisServer.commands 哈希表中
     server.delCommand = lookupCommandByCString("del");
     server.multiCommand = lookupCommandByCString("multi");
     server.lpushCommand = lookupCommandByCString("lpush");
@@ -3069,11 +3088,12 @@ void initServer(void)
                   strerror(errno));
         exit(1);
     }
+
     server.db = zmalloc(sizeof(redisDb) * server.dbnum);
 
     /* Open the TCP listening socket for the user commands. */
     if (server.port != 0 &&
-        listenToPort(server.port, server.ipfd, &server.ipfd_count) == C_ERR)
+        listenToPort(server.port, server.ipfd, &server.ipfd_count) == C_ERR)        // 创建 tcp 监听 socket
         exit(1);
     if (server.tls_port != 0 &&
         listenToPort(server.tls_port, server.tlsfd, &server.tlsfd_count) == C_ERR)
@@ -3173,6 +3193,7 @@ void initServer(void)
      * domain sockets. */
     for (j = 0; j < server.ipfd_count; j++)
     {
+        // 设置监听 socket 的回调函数. 监听 EPOLLIN 事件，并设置 EPOLLIN 的回调函数 acceptTcpHandler
         if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
                               acceptTcpHandler, NULL) == AE_ERR)
         {
@@ -3354,7 +3375,10 @@ int populateCommandTableParseFlags(struct redisCommand *c, char *strflags)
 }
 
 /* Populates the Redis Command Table starting from the hard coded list
- * we have on top of server.c file. */
+ * we have on top of server.c file.
+ *
+ * 将 redisCommandTable 中的命令信息插入到 redisServer.commands 哈希表中
+ */
 void populateCommandTable(void)
 {
     int j;
@@ -3436,12 +3460,13 @@ void redisOpArrayFree(redisOpArray *oa)
 }
 
 /* ====================== Commands lookup and execution ===================== */
-
+// 根据命令名在 redisServer.commands 中查找 redisCommand
 struct redisCommand *lookupCommand(sds name)
 {
     return dictFetchValue(server.commands, name);
 }
 
+// 根据命令名查找 redisCommand
 struct redisCommand *lookupCommandByCString(const char *s)
 {
     struct redisCommand *cmd;
@@ -3557,13 +3582,18 @@ void preventCommandReplication(client *c)
 /* Call() is the core of Redis execution of a command.
  *
  * The following flags can be passed:
- * CMD_CALL_NONE        No flags.
- * CMD_CALL_SLOWLOG     Check command speed and log in the slow log if needed.
- * CMD_CALL_STATS       Populate command stats.
+ * CMD_CALL_NONE        No flags. 不执行任何额外行为
+ * CMD_CALL_SLOWLOG     Check command speed and log in the slow log if needed. 检查命令的执行速度，如果需要的话，将其记录到慢日志中
+ * CMD_CALL_STATS       Populate command stats.     统计命令状态
+ *
+ * 如果修改了数据库，会将这条命令添加到 AOF 文件中
  * CMD_CALL_PROPAGATE_AOF   Append command to AOF if it modified the dataset
  *                          or if the client flags are forcing propagation.
+ *
+ * 如果命令修改了数据库，会将这条命令发给 slave
  * CMD_CALL_PROPAGATE_REPL  Send command to slaves if it modified the dataset
  *                          or if the client flags are forcing propagation.
+ *
  * CMD_CALL_PROPAGATE   Alias for PROPAGATE_AOF|PROPAGATE_REPL.
  * CMD_CALL_FULL        Alias for SLOWLOG|STATS|PROPAGATE.
  *
@@ -3624,7 +3654,7 @@ void call(client *c, int flags)
     }
 
     start = server.ustime;
-    c->cmd->proc(c);
+    c->cmd->proc(c);        // 执行命令
     duration = ustime() - start;
     dirty = server.dirty - dirty;
     if (dirty < 0)
@@ -3830,7 +3860,10 @@ void rejectCommandFormat(client *c, const char *fmt, ...)
  *
  * If C_OK is returned the client is still alive and valid and
  * other operations can be performed by the caller. Otherwise
- * if C_ERR is returned the client was destroyed (i.e. after QUIT). */
+ * if C_ERR is returned the client was destroyed (i.e. after QUIT).
+ *
+ * 执行命令
+ */
 int processCommand(client *c)
 {
     moduleCallCommandFilters(c);
@@ -3848,7 +3881,7 @@ int processCommand(client *c)
 
     /* Now lookup the command and check ASAP about trivial error conditions
      * such as wrong arity, bad command name and so forth. */
-    c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr);
+    c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr); // 查找命令
     if (!c->cmd)
     {
         sds args = sdsempty();
@@ -3860,6 +3893,7 @@ int processCommand(client *c)
         sdsfree(args);
         return C_OK;
     }
+    // 判断命令参数的个数是否合法
     else if ((c->cmd->arity > 0 && c->cmd->arity != c->argc) ||
              (c->argc < -c->cmd->arity))
     {
@@ -3868,6 +3902,7 @@ int processCommand(client *c)
         return C_OK;
     }
 
+    //  判断命令标记，然后设置对应的回调函数
     int is_write_command = (c->cmd->flags & CMD_WRITE) ||
                            (c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_WRITE));
     int is_denyoom_command = (c->cmd->flags & CMD_DENYOOM) ||
@@ -3877,6 +3912,7 @@ int processCommand(client *c)
     int is_denyloading_command = !(c->cmd->flags & CMD_LOADING) ||
                                  (c->cmd->proc == execCommand && (c->mstate.cmd_inv_flags & CMD_LOADING));
 
+    // 如果服务器开启了认证，需要对客户端进行验证
     if (authRequired(c))
     {
         /* AUTH and HELLO and no auth commands are valid even in
@@ -3910,7 +3946,12 @@ int processCommand(client *c)
     /* If cluster is enabled perform the cluster redirection here.
      * However we don't perform the redirection if:
      * 1) The sender of this command is our master.
-     * 2) The command has no key arguments. */
+     * 2) The command has no key arguments.
+     *
+     * 如果启用了集群，那么执行集群重定向: 将该命令递交给 master 去执行。两种情况下不需要重定向:
+     * 1. 如果当前就是 master, 不需要重定向
+     * 2. 当前命令的 firstkey 为 0
+     **/
     if (server.cluster_enabled &&
         !(c->flags & CLIENT_MASTER) &&
         !(c->flags & CLIENT_LUA &&
@@ -3945,6 +3986,7 @@ int processCommand(client *c)
      * propagation of DELs due to eviction. */
     if (server.maxmemory && !server.lua_timedout)
     {
+        // 如果内存超过了 redis 的最大内存限制，需要在这里淘汰掉不活跃的 key
         int out_of_memory = freeMemoryIfNeededAndSafe() == C_ERR;
         /* freeMemoryIfNeeded may flush slave output buffers. This may result
          * into a slave, that may be the active client, to be freed. */
@@ -3986,7 +4028,7 @@ int processCommand(client *c)
 
     /* Don't accept write commands if there are problems persisting on disk
      * and if this is a master instance. */
-    int deny_write_type = writeCommandsDeniedByDiskError();
+    int deny_write_type = writeCommandsDeniedByDiskError(); // 磁盘错误，拒绝写指令
     if (deny_write_type != DISK_ERROR_TYPE_NONE &&
         server.masterhost == NULL &&
         (is_write_command || c->cmd->proc == pingCommand))
@@ -4002,6 +4044,7 @@ int processCommand(client *c)
 
     /* Don't accept write commands if there are not enough good slaves and
      * user configured the min-slaves-to-write option. */
+    // master-slave 模式下, master 没有足够的 slave 实例，拒绝写指令
     if (server.masterhost == NULL &&
         server.repl_min_slaves_to_write &&
         server.repl_min_slaves_max_lag &&
@@ -4014,6 +4057,7 @@ int processCommand(client *c)
 
     /* Don't accept write commands if this is a read only slave. But
      * accept write commands if this is our master. */
+    // 只读 slave, 拒绝写指令
     if (server.masterhost && server.repl_slave_ro &&
         !(c->flags & CLIENT_MASTER) &&
         is_write_command)
@@ -4024,6 +4068,7 @@ int processCommand(client *c)
 
     /* Only allow a subset of commands in the context of Pub/Sub if the
      * connection is in RESP2 mode. With RESP3 there are no limits. */
+    // 如果当前 client 处于订阅模式，只能处理一部分指令
     if ((c->flags & CLIENT_PUBSUB && c->resp == 2) &&
         c->cmd->proc != pingCommand &&
         c->cmd->proc != subscribeCommand &&
@@ -4051,6 +4096,7 @@ int processCommand(client *c)
 
     /* Loading DB? Return an error if the command has not the
      * CMD_LOADING flag. */
+    // 服务器正处于加载状态, 只能处理 CMD_LOADING 命令
     if (server.loading && is_denyloading_command)
     {
         rejectCommand(c, shared.loadingerr);
@@ -4092,7 +4138,7 @@ int processCommand(client *c)
     }
     else
     {
-        call(c, CMD_CALL_FULL);
+        call(c, CMD_CALL_FULL);     // 执行命令的核心接口
         c->woff = server.master_repl_offset;
         if (listLength(server.ready_keys))
             handleClientsBlockedOnKeys();
@@ -5638,6 +5684,7 @@ int checkForSentinelMode(int argc, char **argv)
 }
 
 /* Function called at startup to load RDB or AOF file in memory. */
+// 从磁盘上加载 AOF 文件或者 RDB 文件
 void loadDataFromDisk(void)
 {
     long long start = ustime();
@@ -5982,7 +6029,7 @@ int main(int argc, char **argv)
     server.supervised = redisIsSupervised(server.supervised_mode);
     int background = server.daemonize && !server.supervised;
     if (background)
-        daemonize();
+        daemonize();    // 以守护进程的方式运行
 
     serverLog(LL_WARNING, "oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo");
     serverLog(LL_WARNING,

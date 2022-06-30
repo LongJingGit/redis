@@ -94,12 +94,26 @@
  *
  */
 
-#define RAX_NODE_MAX_SIZE ((1<<29)-1)
-typedef struct raxNode {
-    uint32_t iskey:1;     /* Does this node contain a key? */
-    uint32_t isnull:1;    /* Associated value is NULL (don't store it). */
-    uint32_t iscompr:1;   /* Node is compressed. */
-    uint32_t size:29;     /* Number of children, or compressed string len. */
+#define RAX_NODE_MAX_SIZE ((1 << 29) - 1)
+typedef struct raxNode
+{
+    /* 表示当前节点是否是一个完整的 key. 如果节点是一个 key, 那么从基数树的根节点下降到当前节点的路径上的所有字符所组成的字符串便是 key-value
+     * 空间中的一个 key. 需要注意的是, 这个 key 是不包含当前节点的内容的, 另外 raxNode 只有是 key 的时候, 才会保存对应的 value，并拥有数据
+     * 指针 value-ptr. */
+    uint32_t iskey : 1; /* Does this node contain a key? */
+
+    /* 只有当 ikey 为 1 的时候，才会有数据指针 value-ptr. 但是也存在只有 key 没有 value 的情况。而 isnull 就是用来标记该节点是否为一个空节点。
+     * 如果 isnull 为 1, 说明该节点不需要为数据指针分配内存. */
+    uint32_t isnull : 1; /* Associated value is NULL (don't store it). */
+
+    // 标记当前节点是普通节点还是压缩节点
+    uint32_t iscompr : 1; /* Node is compressed. */
+
+    // 如果是压缩节点，表示压缩数据的长度；如果是普通节点，则表示该节点的子节点的个数
+    uint32_t size : 29; /* Number of children, or compressed string len. */
+
+    // 上面的四个字段, 共 32 字节, 为该节点的 header
+
     /* Data layout is as follows:
      *
      * If node is not compressed we have 'size' bytes, one for each children
@@ -107,7 +121,12 @@ typedef struct raxNode {
      * Note how the character is not stored in the children but in the
      * edge of the parents:
      *
-     * [header iscompr=0][abc][a-ptr][b-ptr][c-ptr](value-ptr?)
+     * 普通节点的内存分布:
+     *
+     *      [header iscompr=0][abc][a-ptr][b-ptr][c-ptr](value-ptr?)
+     *
+     *   表示这个基数树节点具有三个子节点，分别通过匹配字符 a, b, c 来转移到对应的子节点，而这个节点与其子节点的关联是通过存储在 abc 后面的
+     * 三个子节点指针实现的. value-ptr 为该节点的数据指针
      *
      * if node is compressed (iscompr bit is 1) the node has 1 children.
      * In that case the 'size' bytes of the string stored immediately at
@@ -116,7 +135,9 @@ typedef struct raxNode {
      * the sequence is actually represented as a node, and pointed to by
      * the current compressed node.
      *
-     * [header iscompr=1][xyz][z-ptr](value-ptr?)
+     * 压缩节点的内存分布:
+     *
+     *      [header iscompr=1][xyz][z-ptr](value-ptr?)
      *
      * Both compressed and not compressed nodes can represent a key
      * with associated data in the radix tree at any level (not just terminal
@@ -126,11 +147,14 @@ typedef struct raxNode {
      * (isnull=0), then after the raxNode pointers pointing to the
      * children, an additional value pointer is present (as you can see
      * in the representation above as "value-ptr" field).
+     *
+     * data 字段中存储子节点的分支字符, 子节点的指针, 以及数据指针 value-ptr. 类型都是 raxNode*
      */
     unsigned char data[];
 } raxNode;
 
-typedef struct rax {
+typedef struct rax
+{
     raxNode *head;
     uint64_t numele;
     uint64_t numnodes;
@@ -140,8 +164,9 @@ typedef struct rax {
  * a list of parent nodes to the caller. The nodes do not have a "parent"
  * field for space concerns, so we use the auxiliary stack when needed. */
 #define RAX_STACK_STATIC_ITEMS 32
-typedef struct raxStack {
-    void **stack; /* Points to static_items or an heap allocated array. */
+typedef struct raxStack
+{
+    void **stack;           /* Points to static_items or an heap allocated array. */
     size_t items, maxitems; /* Number of items contained and total space. */
     /* Up to RAXSTACK_STACK_ITEMS items we avoid to allocate on the heap
      * and use this static array of pointers instead. */
@@ -166,22 +191,23 @@ typedef int (*raxNodeCallback)(raxNode **noderef);
 
 /* Radix tree iterator state is encapsulated into this data structure. */
 #define RAX_ITER_STATIC_LEN 128
-#define RAX_ITER_JUST_SEEKED (1<<0) /* Iterator was just seeked. Return current
-                                       element for the first iteration and
-                                       clear the flag. */
-#define RAX_ITER_EOF (1<<1)    /* End of iteration reached. */
-#define RAX_ITER_SAFE (1<<2)   /* Safe iterator, allows operations while
-                                  iterating. But it is slower. */
-typedef struct raxIterator {
+#define RAX_ITER_JUST_SEEKED (1 << 0) /* Iterator was just seeked. Return current \
+                                         element for the first iteration and      \
+                                         clear the flag. */
+#define RAX_ITER_EOF (1 << 1)         /* End of iteration reached. */
+#define RAX_ITER_SAFE (1 << 2)        /* Safe iterator, allows operations while \
+                                         iterating. But it is slower. */
+typedef struct raxIterator
+{
     int flags;
-    rax *rt;                /* Radix tree we are iterating. */
-    unsigned char *key;     /* The current string. */
-    void *data;             /* Data associated to this key. */
-    size_t key_len;         /* Current key length. */
-    size_t key_max;         /* Max key len the current key buffer can hold. */
+    rax *rt;            /* Radix tree we are iterating. */
+    unsigned char *key; /* The current string. */
+    void *data;         /* Data associated to this key. */
+    size_t key_len;     /* Current key length. */
+    size_t key_max;     /* Max key len the current key buffer can hold. */
     unsigned char key_static_string[RAX_ITER_STATIC_LEN];
-    raxNode *node;          /* Current node. Only for unsafe iteration. */
-    raxStack stack;         /* Stack used for unsafe iteration. */
+    raxNode *node;           /* Current node. Only for unsafe iteration. */
+    raxStack stack;          /* Stack used for unsafe iteration. */
     raxNodeCallback node_cb; /* Optional node callback. Normally set to NULL. */
 } raxIterator;
 
@@ -195,7 +221,7 @@ int raxTryInsert(rax *rax, unsigned char *s, size_t len, void *data, void **old)
 int raxRemove(rax *rax, unsigned char *s, size_t len, void **old);
 void *raxFind(rax *rax, unsigned char *s, size_t len);
 void raxFree(rax *rax);
-void raxFreeWithCallback(rax *rax, void (*free_callback)(void*));
+void raxFreeWithCallback(rax *rax, void (*free_callback)(void *));
 void raxStart(raxIterator *it, rax *rt);
 int raxSeek(raxIterator *it, const char *op, unsigned char *ele, size_t len);
 int raxNext(raxIterator *it);
