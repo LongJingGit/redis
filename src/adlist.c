@@ -76,6 +76,7 @@ void listEmpty(list *list)
 /* Free the whole list.
  *
  * This function can't fail. */
+// 释放链表中的每一个节点,并释放链表本身
 void listRelease(list *list)
 {
     listEmpty(list);
@@ -222,12 +223,14 @@ void listReleaseIterator(listIter *iter)
 }
 
 /* Create an iterator in the list private iterator structure */
+// 初始化一个正向迭代器
 void listRewind(list *list, listIter *li)
 {
     li->next = list->head;
     li->direction = AL_START_HEAD;
 }
 
+// 初始化一个反向迭代器
 void listRewindTail(list *list, listIter *li)
 {
     li->next = list->tail;
@@ -247,19 +250,21 @@ void listRewindTail(list *list, listIter *li)
  *     doSomethingWith(listNodeValue(node));
  * }
  *
- * */
+ * 获取迭代器当前指向节点的指针,并将迭代器移动到下一个位置
+ **/
 listNode *listNext(listIter *iter)
 {
-    listNode *current = iter->next;
+    listNode *current = iter->next; // 获取迭代器当前指向的节点
 
     if (current != NULL)
     {
         if (iter->direction == AL_START_HEAD)
-            iter->next = current->next;
+            iter->next = current->next; // 移动迭代器方向到下一个位置
         else
             iter->next = current->prev;
     }
-    return current;
+
+    return current; // 返回迭代器当前指向的节点
 }
 
 /* Duplicate the whole list. On out of memory NULL is returned.
@@ -288,7 +293,7 @@ list *listDup(list *orig)
 
         if (copy->dup)
         {
-            value = copy->dup(node->value);
+            value = copy->dup(node->value);     // 如果设置了节点拷贝的方式，则直接调用(可能是深拷贝)
             if (value == NULL)
             {
                 listRelease(copy);
@@ -296,7 +301,8 @@ list *listDup(list *orig)
             }
         }
         else
-            value = node->value;
+            value = node->value;        // 直接进行节点的浅拷贝
+
         if (listAddNodeTail(copy, value) == NULL)
         {
             listRelease(copy);
@@ -402,21 +408,22 @@ void listRotateHeadToTail(list *list)
 
 /* Add all the elements of the list 'o' at the end of the
  * list 'l'. The list 'other' remains empty but otherwise valid. */
+// 将链表 o 连接到链表 l 后面
 void listJoin(list *l, list *o)
 {
     if (o->head)
-        o->head->prev = l->tail;
+        o->head->prev = l->tail;    // o 头结点的 prev 指针指向 l 的尾结点
 
     if (l->tail)
-        l->tail->next = o->head;
+        l->tail->next = o->head;    // 如果 l 不为空, l 尾结点的 next 指针指向 o 的头节点
     else
-        l->head = o->head;
+        l->head = o->head;      // 如果 l 为空, 连接后 o 的头节点就是 l 的头结点
 
     if (o->tail)
-        l->tail = o->tail;
+        l->tail = o->tail;  // 连接后 o 的尾结点就是 l 的尾结点
     l->len += o->len;
 
     /* Setup other as an empty list. */
-    o->head = o->tail = NULL;
+    o->head = o->tail = NULL;       // 将链表 o 置空
     o->len = 0;
 }

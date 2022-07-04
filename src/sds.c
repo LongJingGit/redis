@@ -100,7 +100,7 @@ sds sdsnewlen(const void *init, size_t initlen)
     char type = sdsReqType(initlen); // 计算需要哪种 sds 头部
     /* Empty strings are usually created in order to append. Use type 8
      * since type 5 is not good at this. */
-    if (type == SDS_TYPE_5 && initlen == 0)
+    if (type == SDS_TYPE_5 && initlen == 0)     // 如果是长度为 0 的空字符串,一般会提升为 SDS_TYPE_8 类型
         type = SDS_TYPE_8;
 
     int hdrlen = sdsHdrSize(type); // 计算 sds 头部长度
@@ -170,7 +170,7 @@ sds sdsnewlen(const void *init, size_t initlen)
  * always has an implicit null term. */
 sds sdsempty(void)
 {
-    return sdsnewlen("", 0);
+    return sdsnewlen("", 0);    // 根据长度为 0 的空字符串创建一个 sds 数据
 }
 
 /* Create a new sds string starting from a null terminated C string. */
@@ -180,7 +180,7 @@ sds sdsnew(const char *init)
     return sdsnewlen(init, initlen);
 }
 
-/* Duplicate an sds string. */
+// Duplicate an sds string. 复制一个 sds 变量
 sds sdsdup(const sds s)
 {
     return sdsnewlen(s, sdslen(s));
@@ -208,6 +208,7 @@ void sdsfree(sds s)
  * The output will be "2", but if we comment out the call to sdsupdatelen()
  * the output will be "6" as the string was modified but the logical length
  * remains 6 bytes. */
+// 调整 sds 变量的长度: 根据 strlen(s) 来更新 sdshdr.len 字段信息, 但是并不实际修改 sdshdr.buf 中的数据
 void sdsupdatelen(sds s)
 {
     size_t reallen = strlen(s);
@@ -218,6 +219,7 @@ void sdsupdatelen(sds s)
  * However all the existing buffer is not discarded but set as free space
  * so that next append operations will not require allocations up to the
  * number of bytes previously available. */
+// 将 sdshdr.len 字段长度置为 0，并清空 sds 的内容的，但是内存并不会被释放掉
 void sdsclear(sds s)
 {
     sdssetlen(s, 0);
@@ -236,7 +238,7 @@ void sdsclear(sds s)
 sds sdsMakeRoomFor(sds s, size_t addlen)
 {
     void *sh, *newsh;
-    size_t avail = sdsavail(s); // 计算 sds 中剩余的缓存
+    size_t avail = sdsavail(s); // 计算 sds 对应的 sdshdr 中剩余的缓存
     size_t len, newlen, reqlen;
     char type, oldtype = s[-1] & SDS_TYPE_MASK;
     int hdrlen;

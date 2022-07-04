@@ -42,8 +42,8 @@ typedef struct listNode
 
 typedef struct listIter
 {
-    listNode *next;
-    int direction;
+    listNode *next;         // 迭代器当前指向的节点指针
+    int direction;          // 迭代器的方向
 } listIter;
 
 typedef struct list

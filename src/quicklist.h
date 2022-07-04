@@ -73,14 +73,18 @@ typedef struct quicklistNode
 {
     struct quicklistNode *prev;
     struct quicklistNode *next;
-    unsigned char *zl;                   // 指向压缩链表。可能是原生的 ziplist 或者经过 LZF 算法压缩过的 ziplist（由 encoding 字段决定）
-    unsigned int sz;                     // ziplist size in bytes. 当前链表节点中 zl 指针指向的压缩链表的原始大小（即使数据是经过 LZF 算法压缩的）
-    unsigned int count : 16;             // count of items in ziplist. 当前快速链表节点中数据节点 entry 的数量
-    unsigned int encoding : 2;           /* RAW==1 or LZF==2 */
-    unsigned int container : 2;          /* NONE==1 or ZIPLIST==2 */
+
+     /* 每个快速链表节点都使用底层的压缩链表 zl 来存储实际的数据, 而压缩链表 zl 中利用多个数据节点 entry 来存储数据.
+      * 后文中提到的快速链表的数据节点实际上就是压缩链表 zl 的数据节点 */
+    unsigned char *zl; // 指向压缩链表, 用来存储实际数据的地方. 可能是原生的 ziplist 或者经过 LZF 算法压缩过的 ziplist（由 encoding 字段决定）
+    unsigned int sz;   // ziplist size in bytes. 当前链表节点中压缩链表 zl 的原始大小（即使数据是经过 LZF 算法压缩的）
+
+    unsigned int count : 16;  // count of items in ziplist. 当前链表节点中数据节点 entry 的数量
+    unsigned int encoding : 2;           // RAW==1 or LZF==2
+    unsigned int container : 2;          // NONE==1 or ZIPLIST==2
     unsigned int recompress : 1;         // was this node previous compressed?
-    unsigned int attempted_compress : 1; /* node can't compress; too small */
-    unsigned int extra : 10;             /* more bits to steal for future usage */
+    unsigned int attempted_compress : 1; // node can't compress; too small
+    unsigned int extra : 10;             // more bits to steal for future usage
 } quicklistNode;
 
 /* quicklistLZF is a 4+N byte struct holding 'sz' followed by 'compressed'.
@@ -133,21 +137,29 @@ typedef struct quicklistBookmark
  *      so that they don't consume memory when not used. */
 typedef struct quicklist
 {
-    quicklistNode *head;
-    quicklistNode *tail;
+    quicklistNode *head;    // 快速链表的头结点
+    quicklistNode *tail;    // 快速链表的尾结点
 
     /**
      * 注意区分数据节点和链表节点：
      * 1. quicklist 里面有多个 quicklistNode, 这些 quicklistNode 就是快速链表的 "链表节点"
-     * 2. quicklistNode 中指针 zl 指向的内容实际为 ziplist，里面有多个 entry，这些 entry 就是快速链表的 "数据节点"
+     * 2. quicklistNode 中指针 zl 指向的内容实际为压缩链表 ziplist, 每个压缩链表有多个 entry，这些 entry 就是快速链表的 "数据节点"
+     *
+     * NOTE: 不能用以下方式统计快速链表中数据节点的个数，因为每个快速链表节点底层的压缩链表中的 entry 数量不相等
+     *      quicklist.count = quicklist.len * quicklistNode.count
      */
     unsigned long count; // total count of all entries in all ziplists. 所有数据节点 entry 的数量
     unsigned long len;   // number of quicklistNodes. 链表节点的数量
 
     /**
      * 装载因子.
-     * 1. 如果为正数, 表示每一个链表节点 quicklistNode 中可存储的数据节点 entry 的个数的上限。fill 不宜过大，否则会带来性能问题。上限为 FILL_MAX
-     * 2. 如果为负数, 则标记了每个 quicklistNode 中压缩链表 zl 的最大内存大小，也就是 quicklistNode.sz 字段的上限。上限为 COMPRESS_MAX
+     * 1. 如果为正数, 表示每一个链表节点中可存储的数据节点 entry 的个数的上限, 也就是 quicklistNode.count 字段的上限。fill 不宜过大，否则会带来性能问题。上限为 FILL_MAX, 最大可以表示 2^16-1 个节点, 如果节点个数超过该值，需要遍历整个快速链表才可以获得链表的节点个数
+     * 2. 如果为负数, 表示每个链表节点中压缩链表 zl 的最大内存大小, 也就是 quicklistNode.sz 字段的上限. 上限为 COMPRESS_MAX, 对应着五档内存限制:
+     *    2.1 -1: 4096 字节
+     *    2.2 -2: 8192 字节
+     *    2.3 -3: 16384 字节
+     *    2.4 -4: 32768 字节
+     *    2.5 -5: 65536 字节
      */
     int fill : QL_FILL_BITS; /* fill factor for individual nodes */
 
@@ -168,17 +180,17 @@ typedef struct quicklistIter
 {
     const quicklist *quicklist; // 迭代器所绑定的 quicklist
     quicklistNode *current;     // 迭代器当前遍历到的链表节点 quicklistNode
-    unsigned char *zi;          // 迭代器遍历到的 quicklistNode 中的数据节点 entry
+    unsigned char *zi;          // 迭代器遍历到的 quicklistNode 中的数据节点 entry 的指针
     long offset;                // offset in current ziplist. 迭代器当前遍历到的数据节点 entry 在 ziplist 中的偏移
     int direction;              // 迭代器的遍历方向
 } quicklistIter;
 
-// quicklistNode 相当于 ziplist, quicklistEntry 相当于 ziplist 中的 entry
+// 用 quicklistEntry 来描述快速链表节点底层的压缩链表 zl 中的数据节点 entry
 typedef struct quicklistEntry
 {
     const quicklist *quicklist; // 指向当前数据节点 entry 所在的 quicklist
     quicklistNode *node;        // 当前数据节点 entry 所在的链表节点 quicklistNode
-    unsigned char *zi;          // 当前数据节点 entry 在链表节点 quicklistNode 中的地址（和 quicklistIter.zi 字段含义相同）
+    unsigned char *zi;          // 当前数据节点 entry 在链表节点 quicklistNode 中的地址, 实际上是 entry 在链表节点底层的压缩链表 zl 中的地址（和 quicklistIter.zi 字段含义相同）
     unsigned char *value;       // 如果数据节点 entry 中存储的是字符串编码的数据，那么 value 指向字符串的地址，sz 表示字符串的长度
     long long longval;          // 如果数据节点 entry 中存储的是整型编码的数据，longval 存储 entry 中的整型数
     unsigned int sz;

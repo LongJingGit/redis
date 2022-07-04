@@ -122,6 +122,7 @@ quicklist *quicklistCreate(void)
     return quicklist;
 }
 
+// 设置压缩深度
 #define COMPRESS_MAX ((1 << QL_COMP_BITS) - 1) // 压缩深度的上限
 void quicklistSetCompressDepth(quicklist *quicklist, int compress)
 {
@@ -136,6 +137,7 @@ void quicklistSetCompressDepth(quicklist *quicklist, int compress)
     quicklist->compress = compress;
 }
 
+// 设置装载 因子
 #define FILL_MAX ((1 << (QL_FILL_BITS - 1)) - 1) // 装载因子的上限（因为 fill 为 16 位）
 void quicklistSetFill(quicklist *quicklist, int fill)
 {
@@ -170,7 +172,7 @@ REDIS_STATIC quicklistNode *quicklistCreateNode(void)
 {
     quicklistNode *node;
     node = zmalloc(sizeof(*node));
-    node->zl = NULL;
+    node->zl = NULL;        // 链表节点底层的压缩链表需要单独创建
     node->count = 0;
     node->sz = 0;
     node->next = node->prev = NULL;
@@ -184,6 +186,7 @@ REDIS_STATIC quicklistNode *quicklistCreateNode(void)
 unsigned long quicklistCount(const quicklist *ql) { return ql->count; }
 
 /* Free entire quicklist. */
+// 释放一个快速链表: 包含每个链表节点中的压缩链表, 每个链表节点, 以及最后释放整个快速链表
 void quicklistRelease(quicklist *quicklist)
 {
     unsigned long len;
@@ -237,14 +240,15 @@ REDIS_STATIC int __quicklistCompressNode(quicklistNode *node)
     }
 
     lzf = zrealloc(lzf, sizeof(*lzf) + lzf->sz); // 重新分配内存，按照压缩后的 ziplist 的大小进行内存分配
-    zfree(node->zl);                             // 释放链表节点上原来指向的原始 ziplist
+    zfree(node->zl);       // 释放链表节点上原来未经压缩的压缩链表
     node->zl = (unsigned char *)lzf;             // 将经过压缩的 ziplist 绑定到链表节点的 zl 指针上
-    node->encoding = QUICKLIST_NODE_ENCODING_LZF;
+    node->encoding = QUICKLIST_NODE_ENCODING_LZF;   // 更改编码，表示该节点是压缩节点
     node->recompress = 0;
     return 1;
 }
 
 /* Compress only uncompressed nodes. */
+// 压缩一个链表节点: 实际上压缩的是链表节点底层的压缩链表 zl
 #define quicklistCompressNode(_node)                                     \
     do                                                                   \
     {                                                                    \
@@ -275,12 +279,13 @@ REDIS_STATIC int __quicklistDecompressNode(quicklistNode *node)
     }
 
     zfree(lzf);              // 释放原来的压缩数据
-    node->zl = decompressed; // 将解压后的数据绑定到链表节点上
-    node->encoding = QUICKLIST_NODE_ENCODING_RAW;
+    node->zl = decompressed; // 将解压后的数据绑定到链表节点的压缩链表指针 zl 上
+    node->encoding = QUICKLIST_NODE_ENCODING_RAW;   // 更新编码方式，表示该节点是未经压缩的节点
     return 1;
 }
 
 /* Decompress only compressed nodes. */
+// 解压一个链表节点 _node
 #define quicklistDecompressNode(_node)                                   \
     do                                                                   \
     {                                                                    \
@@ -291,6 +296,7 @@ REDIS_STATIC int __quicklistDecompressNode(quicklistNode *node)
     } while (0)
 
 /* Force node to not be immediately re-compresable */
+// 临时解压一个链表节点，后面需要调用 quicklistRecompressOnly 对该节点重新进行压缩
 #define quicklistDecompressNodeForUse(_node)                             \
     do                                                                   \
     {                                                                    \
@@ -403,6 +409,7 @@ REDIS_STATIC void __quicklistCompress(const quicklist *quicklist, quicklistNode 
     } while (0)
 
 /* If we previously used quicklistDecompressNodeForUse(), just recompress. */
+// 对临时解压的节点重新进行压缩
 #define quicklistRecompressOnly(_ql, _node) \
     do                                      \
     {                                       \
@@ -413,22 +420,33 @@ REDIS_STATIC void __quicklistCompress(const quicklist *quicklist, quicklistNode 
 /* Insert 'new_node' after 'old_node' if 'after' is 1.
  * Insert 'new_node' before 'old_node' if 'after' is 0.
  * Note: 'new_node' is *always* uncompressed, so if we assign it to
- *       head or tail, we do not need to uncompress it. */
+ *       head or tail, we do not need to uncompress it.
+ *
+ * 向快速链表 quicklist 中插入一个链表节点 new_node
+ * 1. 如果 after 为 1, 则将 new_node 插入到 old_node 节点的后面
+ * 2. 如果 after 为 0, 则将 new_node 插入到 old_node 节点的前面
+ *
+ * NOTE:
+ * 1. 待插入节点 new_node 应该是一个未压缩的节点.
+ * 2. 如果插入到头部或者尾部，插入之后不需要进行压缩; 如果插入到其他位置, 则在插入之后需要调用压缩函数对节点进行压缩
+ */
 REDIS_STATIC void __quicklistInsertNode(quicklist *quicklist,
                                         quicklistNode *old_node,
                                         quicklistNode *new_node, int after)
 {
+    // 插入 old_node 的后面
     if (after)
     {
         new_node->prev = old_node;
         if (old_node)
         {
             new_node->next = old_node->next;
-            if (old_node->next)
+            if (old_node->next) // 如果 old_node 不是尾结点, 需要更新 old_node 节点的下一个节点的 prev 指针
                 old_node->next->prev = new_node;
             old_node->next = new_node;
         }
-        if (quicklist->tail == old_node)
+
+        if (quicklist->tail == old_node)    // 如果 old_node 是尾结点, 需要更新尾结点为 new_node
             quicklist->tail = new_node;
     }
     else
@@ -513,7 +531,7 @@ REDIS_STATIC int _quicklistNodeSizeMeetsOptimizationRequirement(const size_t sz,
  * fill: 这个快速链表的装载因子
  * sz: 要插入数据的内存大小。插入一个 entry 节点: <prevlen><encoding><entry-data>
  *
- * 判断是否允许向链表节点 node 中插入数据 sz
+ * 判断是否允许向链表节点 node 中插入数据长度为 sz 的数据
  */
 REDIS_STATIC int _quicklistNodeAllowInsert(const quicklistNode *node,
                                            const int fill, const size_t sz)
@@ -580,14 +598,16 @@ REDIS_STATIC int _quicklistNodeAllowMerge(const quicklistNode *a,
         return 1;
     /* when we return 1 above we know that the limit is a size limit (which is
      * safe, see comments next to optimization_level and SIZE_SAFETY_LIMIT) */
+    // 如果上面的关于内存的限制返回 0, 可能是因为装载因子限制的不是内存大小，所以需要判断节点个数是否满足要求，但是内存仍然会有限制
     else if (!sizeMeetsSafetyLimit(merge_sz))
         return 0;
-    else if ((int)(a->count + b->count) <= fill)
+    else if ((int)(a->count + b->count) <= fill)    // 判断节点个数是否满足装载因子的限制
         return 1;
     else
         return 0;
 }
 
+// 更新链表节点 quicklistNode.sz
 #define quicklistNodeUpdateSz(node)              \
     do                                           \
     {                                            \
@@ -598,25 +618,30 @@ REDIS_STATIC int _quicklistNodeAllowMerge(const quicklistNode *a,
  *
  * Returns 0 if used existing head.
  * Returns 1 if new head created. */
+/**
+ * 在快速链表的头结点中插入长度为 sz 的数据 value; 如果不能插入头节点，则创建一个新的链表节点，然后将 value 插入新的链表节点
+ * 如果插入头节点, 返回 0; 如果插入的是新创建的节点, 返回 1
+ */
 int quicklistPushHead(quicklist *quicklist, void *value, size_t sz)
 {
     quicklistNode *orig_head = quicklist->head;
     assert(sz < UINT32_MAX); /* TODO: add support for quicklist nodes that are sds encoded (not zipped) */
-    if (likely(
-            _quicklistNodeAllowInsert(quicklist->head, quicklist->fill, sz)))
+    if (likely(_quicklistNodeAllowInsert(quicklist->head, quicklist->fill, sz)))    // 判断头结点是否允许插入
     {
-        quicklist->head->zl =
-            ziplistPush(quicklist->head->zl, value, sz, ZIPLIST_HEAD);
-        quicklistNodeUpdateSz(quicklist->head);
+        // 头节点允许插入，则将数据 value 插入到头结点的压缩链表 zl 的头部
+        quicklist->head->zl = ziplistPush(quicklist->head->zl, value, sz, ZIPLIST_HEAD);
+        quicklistNodeUpdateSz(quicklist->head);     // 更新链表节点中压缩链表的长度 sz
     }
     else
     {
-        quicklistNode *node = quicklistCreateNode();
-        node->zl = ziplistPush(ziplistNew(), value, sz, ZIPLIST_HEAD);
+        // 头节点不允许插入, 则创建一个新的节点
+        quicklistNode *node = quicklistCreateNode();    // 创建一个新的节点
+        node->zl = ziplistPush(ziplistNew(), value, sz, ZIPLIST_HEAD);  // 将 value 插入到 ziplist 的头部
 
         quicklistNodeUpdateSz(node);
-        _quicklistInsertNodeBefore(quicklist, quicklist->head, node);
+        _quicklistInsertNodeBefore(quicklist, quicklist->head, node); // 将新的链表节点 node 插入到链表头结点的后面
     }
+
     quicklist->count++;
     quicklist->head->count++;
     return (orig_head != quicklist->head);
@@ -626,15 +651,18 @@ int quicklistPushHead(quicklist *quicklist, void *value, size_t sz)
  *
  * Returns 0 if used existing tail.
  * Returns 1 if new tail created. */
+/**
+ * 在快速节点的尾结点插入长度为 sz 的数据 value; 如果不能插入尾节点，则创建一个新的链表节点，然后将 value 插入新的链表节点
+ * 如果插入尾节点, 返回 0; 如果插入的是新创建的节点, 返回 1
+ */
 int quicklistPushTail(quicklist *quicklist, void *value, size_t sz)
 {
     quicklistNode *orig_tail = quicklist->tail;
     assert(sz < UINT32_MAX); /* TODO: add support for quicklist nodes that are sds encoded (not zipped) */
-    if (likely(
-            _quicklistNodeAllowInsert(quicklist->tail, quicklist->fill, sz)))
+    if (likely(_quicklistNodeAllowInsert(quicklist->tail, quicklist->fill, sz)))
     {
-        quicklist->tail->zl =
-            ziplistPush(quicklist->tail->zl, value, sz, ZIPLIST_TAIL);
+        // 向链表尾节点的底层压缩链表插入长度为 sz 的数据 value
+        quicklist->tail->zl = ziplistPush(quicklist->tail->zl, value, sz, ZIPLIST_TAIL);
         quicklistNodeUpdateSz(quicklist->tail);
     }
     else
@@ -645,6 +673,7 @@ int quicklistPushTail(quicklist *quicklist, void *value, size_t sz)
         quicklistNodeUpdateSz(node);
         _quicklistInsertNodeAfter(quicklist, quicklist->tail, node);
     }
+
     quicklist->count++;
     quicklist->tail->count++;
     return (orig_tail != quicklist->tail);
@@ -653,15 +682,16 @@ int quicklistPushTail(quicklist *quicklist, void *value, size_t sz)
 /* Create new node consisting of a pre-formed ziplist.
  * Used for loading RDBs where entire ziplists have been stored
  * to be retrieved later. */
+// 将压缩链表 zl 整体插入到快速链表
 void quicklistAppendZiplist(quicklist *quicklist, unsigned char *zl)
 {
-    quicklistNode *node = quicklistCreateNode();
+    quicklistNode *node = quicklistCreateNode();    // 创建一个新的链表节点
 
-    node->zl = zl;
+    node->zl = zl;  // 将压缩链表 zl 绑定到新创建链表节点的 zl 指针上
     node->count = ziplistLen(node->zl);
     node->sz = ziplistBlobLen(zl);
 
-    _quicklistInsertNodeAfter(quicklist, quicklist->tail, node);
+    _quicklistInsertNodeAfter(quicklist, quicklist->tail, node);    // 将新创建的节点 node 插入到快速链表尾结点的后面
     quicklist->count += node->count;
 }
 
@@ -671,6 +701,7 @@ void quicklistAppendZiplist(quicklist *quicklist, unsigned char *zl)
  * with smaller ziplist sizes than the saved RDB ziplist.
  *
  * Returns 'quicklist' argument. Frees passed-in ziplist 'zl' */
+// 将压缩链表 zl 中的每一个数据节点依次插入到快速链表的尾结点
 quicklist *quicklistAppendValuesFromZiplist(quicklist *quicklist,
                                             unsigned char *zl)
 {
@@ -698,6 +729,7 @@ quicklist *quicklistAppendValuesFromZiplist(quicklist *quicklist,
 /* Create new (potentially multi-node) quicklist from a single existing ziplist.
  *
  * Returns new quicklist.  Frees passed-in ziplist 'zl'. */
+// 使用压缩链表 zl 来创建一个快速链表
 quicklist *quicklistCreateFromZiplist(int fill, int compress,
                                       unsigned char *zl)
 {
@@ -714,6 +746,7 @@ quicklist *quicklistCreateFromZiplist(int fill, int compress,
         }                                  \
     } while (0)
 
+// 删除链表节点 node
 REDIS_STATIC void __quicklistDelNode(quicklist *quicklist,
                                      quicklistNode *node)
 {
@@ -760,7 +793,10 @@ REDIS_STATIC void __quicklistDelNode(quicklist *quicklist,
  *       already had to get *p from an uncompressed node somewhere.
  *
  * Returns 1 if the entire node was deleted, 0 if node still exists.
- * Also updates in/out param 'p' with the next offset in the ziplist. */
+ * Also updates in/out param 'p' with the next offset in the ziplist.
+ *
+ * 删除链表节点 node 中指针 p 指向的数据节点
+ */
 REDIS_STATIC int quicklistDelIndex(quicklist *quicklist, quicklistNode *node,
                                    unsigned char **p)
 {
@@ -771,11 +807,11 @@ REDIS_STATIC int quicklistDelIndex(quicklist *quicklist, quicklistNode *node,
     if (node->count == 0)
     {
         gone = 1;
-        __quicklistDelNode(quicklist, node);
+        __quicklistDelNode(quicklist, node);    // 如果链表节点中数据节点为 0, 删除这个链表节点
     }
     else
     {
-        quicklistNodeUpdateSz(node);
+        quicklistNodeUpdateSz(node);    // 更新 quicklistNode.sz
     }
     quicklist->count--;
     /* If we deleted the node, the original node is no longer valid */
@@ -785,13 +821,15 @@ REDIS_STATIC int quicklistDelIndex(quicklist *quicklist, quicklistNode *node,
 /* Delete one element represented by 'entry'
  *
  * 'entry' stores enough metadata to delete the proper position in
- * the correct ziplist in the correct quicklist node. */
+ * the correct ziplist in the correct quicklist node.
+ *
+ * 从快速链表中删除 entry 这个数据节点
+ */
 void quicklistDelEntry(quicklistIter *iter, quicklistEntry *entry)
 {
     quicklistNode *prev = entry->node->prev;
     quicklistNode *next = entry->node->next;
-    int deleted_node = quicklistDelIndex((quicklist *)entry->quicklist,
-                                         entry->node, &entry->zi);
+    int deleted_node = quicklistDelIndex((quicklist *)entry->quicklist, entry->node, &entry->zi);
 
     /* after delete, the zi is now invalid for any future usage. */
     iter->zi = NULL;
@@ -859,7 +897,7 @@ int quicklistReplaceAtIndex(quicklist *quicklist, long index, void *data, int sz
  * Returns the input node picked to merge against or NULL if
  * merging was not possible.
  *
- * 合并链表节点 a 和 b 的底层的压缩链表。但是并没有对合并之后的合法性进行校验
+ * 合并链表节点 a 和 b 的底层的压缩链表, 返回合并后的链表节点. 但是并没有对合并之后的合法性进行校验
  */
 REDIS_STATIC quicklistNode *_quicklistZiplistMerge(quicklist *quicklist,
                                                    quicklistNode *a,
@@ -873,7 +911,7 @@ REDIS_STATIC quicklistNode *_quicklistZiplistMerge(quicklist *quicklist,
     {
         /* We merged ziplists! Now remove the unused quicklistNode. */
         quicklistNode *keep = NULL, *nokeep = NULL;
-        if (!a->zl)
+        if (!a->zl) // 如果节点 a 底层的压缩链表 zl 被释放了, 说明留下的是 b
         {
             nokeep = a;
             keep = b;
@@ -884,8 +922,8 @@ REDIS_STATIC quicklistNode *_quicklistZiplistMerge(quicklist *quicklist,
             keep = a;
         }
 
-        keep->count = ziplistLen(keep->zl);
-        quicklistNodeUpdateSz(keep);
+        keep->count = ziplistLen(keep->zl); // 计算 quicklistNode.count
+        quicklistNodeUpdateSz(keep);        // 计算 quicklistNode.sz
 
         nokeep->count = 0;
         __quicklistDelNode(quicklist, nokeep); // 删除被合并的链表节点
@@ -907,10 +945,9 @@ REDIS_STATIC quicklistNode *_quicklistZiplistMerge(quicklist *quicklist,
  *   - (center->prev, center)
  *   - (center, center->next)
  *
- * 尝试对 center 节点以及两边各两个链表节点一共五个节点合并成一个链表节点
+ * 尝试将快速链表 quicklist 中链表节点 center 以及该节点左右两边各两个链表节点一共五个节点合并成一个链表节点
  */
-REDIS_STATIC void _quicklistMergeNodes(quicklist *quicklist,
-                                       quicklistNode *center)
+REDIS_STATIC void _quicklistMergeNodes(quicklist *quicklist, quicklistNode *center)
 {
     int fill = quicklist->fill;
     quicklistNode *prev, *prev_prev, *next, *next_next, *target;
@@ -931,6 +968,7 @@ REDIS_STATIC void _quicklistMergeNodes(quicklist *quicklist,
     }
 
     /* Try to merge prev_prev and prev */
+    // 尝试合并 prev 和 prev_prev 这两个节点
     if (_quicklistNodeAllowMerge(prev, prev_prev, fill))
     {
         _quicklistZiplistMerge(quicklist, prev_prev, prev);
@@ -938,6 +976,7 @@ REDIS_STATIC void _quicklistMergeNodes(quicklist *quicklist,
     }
 
     /* Try to merge next and next_next */
+    // 尝试合并 next 和 next_next 这两个节点
     if (_quicklistNodeAllowMerge(next, next_next, fill))
     {
         _quicklistZiplistMerge(quicklist, next, next_next);
@@ -945,6 +984,7 @@ REDIS_STATIC void _quicklistMergeNodes(quicklist *quicklist,
     }
 
     /* Try to merge center node and previous node */
+    // 尝试合并 center 和 prev 这两个节点
     if (_quicklistNodeAllowMerge(center, center->prev, fill))
     {
         target = _quicklistZiplistMerge(quicklist, center->prev, center);
@@ -957,6 +997,7 @@ REDIS_STATIC void _quicklistMergeNodes(quicklist *quicklist,
     }
 
     /* Use result of center merge (or original) to merge with next node. */
+    // 尝试合并 target 和 target->next 这两个节点
     if (_quicklistNodeAllowMerge(target, target->next, fill))
     {
         _quicklistZiplistMerge(quicklist, target, target->next);
@@ -981,7 +1022,13 @@ REDIS_STATIC void _quicklistMergeNodes(quicklist *quicklist,
  *
  * The input node keeps all elements not taken by the returned node.
  *
- * Returns newly created node or NULL if split not possible. */
+ * Returns newly created node or NULL if split not possible.
+ *
+ * 将一个链表节点拆分成两个链表节点: 从链表节点 node 中的压缩链表 offset 位置，将该压缩链表拆分成两个链表节点，返回被拆分出来的链表节点
+ *
+ * 1. 如果 after 为 1, 原 node 节点中保留了压缩链表 zl 的 [0, offset] 位置的数据节点, 拆分出来的节点为压缩链表中 [offset+1, END] 位置的数据节点
+ * 2. 如果 after 为 0, 原 node 节点中保留了压缩链表 zl 的 [offset+1, END] 位置的数据节点, 拆分出来的节点为压缩链表 zl 中 [0, offset] 位置的数据节点
+ */
 REDIS_STATIC quicklistNode *_quicklistSplitNode(quicklistNode *node, int offset, int after)
 {
     size_t zl_sz = node->sz;
@@ -1016,7 +1063,11 @@ REDIS_STATIC quicklistNode *_quicklistSplitNode(quicklistNode *node, int offset,
 /* Insert a new entry before or after existing entry 'entry'.
  *
  * If after==1, the new value is inserted after 'entry', otherwise
- * the new value is inserted before 'entry'. */
+ * the new value is inserted before 'entry'.
+ *
+ * 向快速链表 quicklist 的指定数据节点 entry 的前面或者后面插入一个新的数据节点. 数据节点的值为 value, 数据长度为 sz.
+ * 如果 after == 1, 插入到 entry 的后面, 否则插入到 entry 的前面
+ */
 REDIS_STATIC void _quicklistInsert(quicklist *quicklist, quicklistEntry *entry,
                                    void *value, const size_t sz, int after)
 {
@@ -1166,9 +1217,11 @@ void quicklistInsertAfter(quicklist *quicklist, quicklistEntry *entry,
  * elements may span across multiple quicklistNodes, so we
  * have to be careful about tracking where we start and end.
  *
- * Returns 1 if entries were deleted, 0 if nothing was deleted. */
-int quicklistDelRange(quicklist *quicklist, const long start,
-                      const long count)
+ * Returns 1 if entries were deleted, 0 if nothing was deleted.
+ *
+ * 从快速链表中删除从 start 开始连续 count 个数的数据节点，需要注意的是，被删除的多个数据节点有可能会跨越多个链表节点
+ */
+int quicklistDelRange(quicklist *quicklist, const long start, const long count)
 {
     if (count <= 0)
         return 0;
@@ -1304,7 +1357,7 @@ quicklistIter *quicklistGetIterator(const quicklist *quicklist, int direction)
 /* Initialize an iterator at a specific offset 'idx' and make the iterator
  * return nodes in 'direction' direction.
  *
- * 获取指向索引 idx 对应的数据节点的迭代器
+ * 获取快速链表 quicklist 中方向为 direction 的索引 idx 对应的数据节点的迭代器
  */
 quicklistIter *quicklistGetIteratorAtIdx(const quicklist *quicklist,
                                          const int direction,
@@ -1450,7 +1503,10 @@ int quicklistNext(quicklistIter *iter, quicklistEntry *entry)
  *
  * The original quicklist both on success or error is never modified.
  *
- * Returns newly allocated quicklist. */
+ * Returns newly allocated quicklist.
+ *
+ * 拷贝一个快速链表, 返回拷贝的新的快速链表的指针
+ */
 quicklist *quicklistDup(quicklist *orig)
 {
     quicklist *copy;
@@ -1563,16 +1619,17 @@ int quicklistIndex(const quicklist *quicklist, const long long idx, quicklistEnt
 
     // entry->node->zl: 链表节点中的压缩链表
     // entry->offset: entry 在 ziplist 中的索引
-    entry->zi = ziplistIndex(entry->node->zl, entry->offset); // 调用 ziplist 中的接口，获取当前压缩链表中索引为 offset 的 entry 的地址
+    entry->zi = ziplistIndex(entry->node->zl, entry->offset); // 调用 ziplist 中的接口，获取当前压缩链表中索引为 offset 的数据节点 entry 的地址
 
     // entry->zi: ziplist 中某一个 entry 的指针
-    ziplistGet(entry->zi, &entry->value, &entry->sz, &entry->longval); // 调用 ziplist 接口，解析该 entry 中的数据
+    ziplistGet(entry->zi, &entry->value, &entry->sz, &entry->longval); // 调用 ziplist 接口，解析该数据节点 entry 中的数据
     /* The caller will use our result, so we don't re-compress here.
      * The caller can recompress or delete the node as needed. */
     return 1;
 }
 
 /* Rotate quicklist by moving the tail element to the head. */
+// 翻转一个快速链表: 依次从链表中弹出尾部的数据节点，然后插入到链表的头部
 void quicklistRotate(quicklist *quicklist)
 {
     if (quicklist->count <= 1)
@@ -1617,7 +1674,12 @@ void quicklistRotate(quicklist *quicklist)
  *
  * Return value of 0 means no elements available.
  * Return value of 1 means check 'data' and 'sval' for values.
- * If 'data' is set, use 'data' and 'sz'.  Otherwise, use 'sval'. */
+ * If 'data' is set, use 'data' and 'sz'.  Otherwise, use 'sval'.
+ *
+ * 从快速链表中弹出一个数据节点
+ * 1. 先选择一个链表节点
+ * 2. 弹出链表节点底层压缩链表中的一个数据节点
+ */
 int quicklistPopCustom(quicklist *quicklist, int where, unsigned char **data,
                        unsigned int *sz, long long *sval,
                        void *(*saver)(unsigned char *data, unsigned int sz))
@@ -1639,6 +1701,7 @@ int quicklistPopCustom(quicklist *quicklist, int where, unsigned char **data,
         *sval = -123456789;
 
     quicklistNode *node;
+    // 选择链表头结点还是尾结点的压缩链表
     if (where == QUICKLIST_HEAD && quicklist->head)
     {
         node = quicklist->head;
@@ -1652,24 +1715,25 @@ int quicklistPopCustom(quicklist *quicklist, int where, unsigned char **data,
         return 0;
     }
 
+    // 选择压缩链表的数据节点
     p = ziplistIndex(node->zl, pos);
-    if (ziplistGet(p, &vstr, &vlen, &vlong))
+    if (ziplistGet(p, &vstr, &vlen, &vlong))    // 解析数据节点中的数据
     {
-        if (vstr)
+        if (vstr)       // 数据节点中存储的数据是字符串
         {
             if (data)
                 *data = saver(vstr, vlen);
             if (sz)
                 *sz = vlen;
         }
-        else
+        else        // 数据节点中存储的数据是整型数
         {
             if (data)
                 *data = NULL;
             if (sval)
                 *sval = vlong;
         }
-        quicklistDelIndex(quicklist, node, &p);
+        quicklistDelIndex(quicklist, node, &p); // 从链表节点 node 中删除数据节点 p
         return 1;
     }
     return 0;
@@ -1711,8 +1775,7 @@ int quicklistPop(quicklist *quicklist, int where, unsigned char **data,
 }
 
 /* Wrapper to allow argument-based switching between HEAD/TAIL pop */
-void quicklistPush(quicklist *quicklist, void *value, const size_t sz,
-                   int where)
+void quicklistPush(quicklist *quicklist, void *value, const size_t sz, int where)
 {
     if (where == QUICKLIST_HEAD)
     {

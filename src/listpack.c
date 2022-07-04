@@ -64,12 +64,12 @@
  *
  * <encoding>: 标记该节点的编码方式。按照整型编码或者按照字符串编码。当节点使用的是字符串编码时，该字段还会指明字符串数据的字节长度。如果当前节点的数据是一个小整数，则本字段还可以存储这个数据信息。
  *
- *  1. 以下三种 <encoding> 字段表示当前节点的数据是按照字符串进行编码的，此时 <encoding> 属于变长字段：
+ *  1. 以下三种 <encoding> 字段表示当前节点是按照字符串进行编码的, <encoding> 字段指明了字符串的长度, 此时 <encoding> 属于变长字段：
  *     [10XXXXXX] <encoding> 字段占 1 个字节，使用 <encoding> 字段后面的 6 个比特位来存储字符串长度。最多可以表示长度不超过 2^6-1 的字符串
  *     [1110XXXX] <encoding> 字段占 2 个字节，需要使用 <encoding> 的后 4 个比特位以及额外的 1 个字节。最多可以表示长度不超过 2^12-1 的字符串
  *     [11110000] <encoding> 字段占 5 个字节，需要额外使用 4 个字节来存储字符串的长度。最多可以表示长度不超过 2^32-1 的字符串
  *
- *  2. 以下六种 <encoding> 字段表示节点的数据是按照位整数来进行编码的，此时 <encoding> 字段只占 1 个字节：
+ *  2. 以下六种 <encoding> 字段表示当前节点是按照整数来进行编码的，此时 <encoding> 字段只占 1 个字节：
  *     [0XXXXXXX] 表示节点的数据是按照 7 位整数来进行编码的，直接使用 <encoding> 字段后面的 7 个比特位来存储数据
  *     [110XXXXX] 表示节点的数据是使用 13 位整数来进行编码的，需要使用 <encoding> 字段的后 5 个比特位以及额外的 1 个字节来存储数据
  *     [11110001] 表明节点的数据是按照 16 位整数进行编码的，需要额外的 2 个字节作为 <entry-data> 来存储数据
@@ -91,7 +91,7 @@
  *     LP_ENCODING_64BIT_INT        [11110100]
  *
  *
- * <entry-tot-len>: 表示节点的 <encoding> 字段和 <entry-data> 两个字段的总长度
+ * <entry-tot-len>: 表示节点的 <encoding> 字段和 <entry-data> 两个字段的总长度, 属于变长字段
  *
  *     [0XXXXXXX]  <entry-tot-len> 字段占 1 个字节，可表示的长度范围是 [1, 2^7-1] --> [1, 127]
  *     [0XXXXXXX][1XXXXXXXX]  <entry-tot-len> 字段占 2 个字节，可表示的长度范围是 [2^7, 2^14-1] --> [128, 16383]
@@ -175,13 +175,17 @@
                                       ((uint32_t)(p)[3] << 16) | \
                                       ((uint32_t)(p)[4] << 24))
 
+// 读取 listpack 的 <lpbytes> 字段
 #define lpGetTotalBytes(p) (((uint32_t)(p)[0] << 0) |  \
                             ((uint32_t)(p)[1] << 8) |  \
                             ((uint32_t)(p)[2] << 16) | \
                             ((uint32_t)(p)[3] << 24))
 
+// 读取 listpack 的 <lplen> 字段
 #define lpGetNumElements(p) (((uint32_t)(p)[4] << 0) | \
                              ((uint32_t)(p)[5] << 8))
+
+// 设置 listpack 的 <lpbytes> 字段: listpack 的内存大小
 #define lpSetTotalBytes(p, v)        \
     do                               \
     {                                \
@@ -191,6 +195,7 @@
         (p)[3] = ((v) >> 24) & 0xff; \
     } while (0)
 
+// 设置 listpack 的 <lplen> 字段: listpack 中的节点个数
 #define lpSetNumElements(p, v)      \
     do                              \
     {                               \
@@ -305,18 +310,19 @@ int lpStringToInt64(const char *s, unsigned long slen, int64_t *value)
 
 /* Create a new, empty listpack.
  * On success the new listpack is returned, otherwise an error is returned. */
+// 创建一个空的紧凑链表
 unsigned char *lpNew(void)
 {
-    unsigned char *lp = lp_malloc(LP_HDR_SIZE + 1);
+    unsigned char *lp = lp_malloc(LP_HDR_SIZE + 1); // +1 是因为还有 <lpend> 字段为 1 字节
     if (lp == NULL)
         return NULL;
-    lpSetTotalBytes(lp, LP_HDR_SIZE + 1);
-    lpSetNumElements(lp, 0);
-    lp[LP_HDR_SIZE] = LP_EOF;
+    lpSetTotalBytes(lp, LP_HDR_SIZE + 1);   // 设置 <lpbytes> 字段
+    lpSetNumElements(lp, 0);        // 设置 <lplen> 字段
+    lp[LP_HDR_SIZE] = LP_EOF;   // 设置 <lpend> 字段
     return lp;
 }
 
-/* Free the specified listpack. */
+// Free the specified listpack. 释放紧凑列表 lp
 void lpFree(unsigned char *lp)
 {
     lp_free(lp);
@@ -420,6 +426,7 @@ int lpEncodeGetType(unsigned char *ele, uint32_t size, unsigned char *intenc, ui
  * The function returns the number of bytes used to encode it, from
  * 1 to 5. If 'buf' is NULL the function just returns the number of bytes
  * needed in order to encode the backlen. */
+// 计算 <entry-tot-len> 字段的大小
 unsigned long lpEncodeBacklen(unsigned char *buf, uint64_t l)
 {
     if (l <= 127)
@@ -521,6 +528,7 @@ void lpEncodeString(unsigned char *buf, unsigned char *s, uint32_t len)
 
 /* Return the encoded length of the listpack element pointed by 'p'. If the
  * element encoding is wrong then 0 is returned. */
+// 计算 <encoding> 字段和 <entry-data> 字段需要的内存大小
 uint32_t lpCurrentEncodedSize(unsigned char *p)
 {
     if (LP_ENCODING_IS_7BIT_UINT(p[0]))
@@ -550,10 +558,11 @@ uint32_t lpCurrentEncodedSize(unsigned char *p)
  * function if the current element is the EOF element at the end of the
  * listpack, however, while this function is used to implement lpNext(),
  * it does not return NULL when the EOF element is encountered. */
+// 跳过当前节点 p, 返回下一个节点的指针
 unsigned char *lpSkip(unsigned char *p)
 {
-    unsigned long entrylen = lpCurrentEncodedSize(p);
-    entrylen += lpEncodeBacklen(NULL, entrylen);
+    unsigned long entrylen = lpCurrentEncodedSize(p);   // 计算 <encoding> 和 <entry-data> 字段的大小
+    entrylen += lpEncodeBacklen(NULL, entrylen);    // 计算 <entry-tot-len> 字段的大小, 然后和前两个字段相加, 可以得到整个 entry 的内存大小
     p += entrylen;
     return p;
 }
@@ -561,6 +570,7 @@ unsigned char *lpSkip(unsigned char *p)
 /* If 'p' points to an element of the listpack, calling lpNext() will return
  * the pointer to the next element (the one on the right), or NULL if 'p'
  * already pointed to the last element of the listpack. */
+// 返回紧凑列表 lp 中节点 p 的下一个节点, 如果 p 已经是最后一个节点, 则返回 NULL
 unsigned char *lpNext(unsigned char *lp, unsigned char *p)
 {
     ((void)lp); /* lp is not used for now. However lpPrev() uses it. */
@@ -585,6 +595,7 @@ unsigned char *lpPrev(unsigned char *lp, unsigned char *p)
 
 /* Return a pointer to the first element of the listpack, or NULL if the
  * listpack has no elements. */
+// 返回紧凑列表 lp 中的第一个节点的指针
 unsigned char *lpFirst(unsigned char *lp)
 {
     lp += LP_HDR_SIZE; /* Skip the header. */
@@ -595,6 +606,7 @@ unsigned char *lpFirst(unsigned char *lp)
 
 /* Return a pointer to the last element of the listpack, or NULL if the
  * listpack has no elements. */
+// 返回紧凑列表 lp 的最后一个节点的指针
 unsigned char *lpLast(unsigned char *lp)
 {
     unsigned char *p = lp + lpGetTotalBytes(lp) - 1; /* Seek EOF element. */
@@ -606,6 +618,7 @@ unsigned char *lpLast(unsigned char *lp)
  * needed. As a side effect of calling this function, the listpack header
  * could be modified, because if the count is found to be already within
  * the 'numele' header field range, the new value is set. */
+// 获取紧凑列表的节点个数. 如果读取 <lplen> 字段小于 2^16-1, 则直接返回 <lplen> 字段中保存的数据, 否则需要遍历整个 listpack
 uint32_t lpLength(unsigned char *lp)
 {
     uint32_t numele = lpGetNumElements(lp);
@@ -624,6 +637,7 @@ uint32_t lpLength(unsigned char *lp)
 
     /* If the count is again within range of the header numele field,
      * set it. */
+    // 为什么这里会重新更新 <lplen> 字段: 有可能原来 <lplen> 字段中存的数据大于 UINT16_MAX, 但是实际上节点个数小于 UINT16_MAX, 所以在这里需要更新
     if (count < LP_HDR_NUMELE_UNKNOWN)
         lpSetNumElements(lp, count);
     return count;
@@ -662,7 +676,14 @@ uint32_t lpLength(unsigned char *lp)
  * Similarly, there is no error returned since the listpack normally can be
  * assumed to be valid, so that would be a very high API cost. However a function
  * in order to check the integrity of the listpack at load time is provided,
- * check lpIsValid(). */
+ * check lpIsValid().
+ *
+ * 返回紧凑列表中 p 指针指向的节点元素
+ * 1. 如果该节点是字符串编码, 返回指向字符串的指针, 字符串长度通过 count 返回
+ * 2. 如果该节点是整数编码, 函数会返回空指针
+ *    2.1 如果入参 intbuf 为 nullptr, 那么将解析出来的整数通过 count 返回,
+ *    2.2 如果 intbuf 不为空，将解码出来的整数通过字符串的形式存放到 intbuf 指向的缓存中, 调用者需要保证 intbuf 中有 LP_INTBUF_SIZE 的空间
+ */
 unsigned char *lpGet(unsigned char *p, int64_t *count, unsigned char *intbuf)
 {
     int64_t val;
@@ -792,7 +813,16 @@ unsigned char *lpGet(unsigned char *p, int64_t *count, unsigned char *intbuf)
  *
  * For deletion operations ('ele' set to NULL) 'newp' is set to the next
  * element, on the right of the deleted one, or to NULL if the deleted element
- * was the last one. */
+ * was the last one.
+ *
+ * 向紧凑列表 lp 中指定节点 p 的前面或者后面插入长度为 size 的元素 ele. 如果 ele 为 NULL, 则表示删除节点 p
+ * where: 标记插入到 p 节点的前面还是后面
+ * 1. where == LP_AFTER         插入 p 节点之后
+ * 2. where == LP_BEFORE        插入 p 节点之前
+ * 3. where == LP_REPLACE       替换 p 节点
+ *
+ * NOTE: ziplist 的 insert 操作只是插入到指定节点的前面
+ */
 unsigned char *lpInsert(unsigned char *lp, unsigned char *ele, uint32_t size, unsigned char *p, int where, unsigned char **newp)
 {
     unsigned char intenc[LP_MAX_INT_ENCODING_LEN];
@@ -956,23 +986,26 @@ unsigned char *lpInsert(unsigned char *lp, unsigned char *ele, uint32_t size, un
 /* Append the specified element 'ele' of length 'len' at the end of the
  * listpack. It is implemented in terms of lpInsert(), so the return value is
  * the same as lpInsert(). */
+// 将长度为 size 的字符串 ele 追加到紧凑列表 lp 的后面
 unsigned char *lpAppend(unsigned char *lp, unsigned char *ele, uint32_t size)
 {
-    uint64_t listpack_bytes = lpGetTotalBytes(lp);
-    unsigned char *eofptr = lp + listpack_bytes - 1;
-    return lpInsert(lp, ele, size, eofptr, LP_BEFORE, NULL);
+    uint64_t listpack_bytes = lpGetTotalBytes(lp);  // 读取 listpack 的内存大小
+    unsigned char *eofptr = lp + listpack_bytes - 1;    // 计算应该插入的位置: 结尾终止符 0xFF 的前面
+    return lpInsert(lp, ele, size, eofptr, LP_BEFORE, NULL);    // 插入到结尾终止符的前面
 }
 
 /* Remove the element pointed by 'p', and return the resulting listpack.
  * If 'newp' is not NULL, the next element pointer (to the right of the
  * deleted one) is returned by reference. If the deleted element was the
  * last one, '*newp' is set to NULL. */
+// 从紧凑列表中 lp 中删除指定节点 p, 如果 newp 非空, 那么被删除节点 p 的右侧节点会通过 newp 参数返回
 unsigned char *lpDelete(unsigned char *lp, unsigned char *p, unsigned char **newp)
 {
     return lpInsert(lp, NULL, 0, p, LP_REPLACE, newp);
 }
 
 /* Return the total number of bytes the listpack is composed of. */
+// 获取整个紧凑列表的占用内存大小: 读取 <lpbytes> 字段
 uint32_t lpBytes(unsigned char *lp)
 {
     return lpGetTotalBytes(lp);
@@ -982,7 +1015,11 @@ uint32_t lpBytes(unsigned char *lp)
  * Positive indexes specify the zero-based element to seek from the head to
  * the tail, negative indexes specify elements starting from the tail, where
  * -1 means the last element, -2 the penultimate and so forth. If the index
- * is out of range, NULL is returned. */
+ * is out of range, NULL is returned.
+ *
+ * 在紧凑列表 lp 中搜索索引为 index 的节点的指针
+ * 正数索引从 0 开始，用于正向的搜索节点；负数的索引则是从 -1 开始，用于反向的搜索节点。如果索引超过了紧凑列表的范围，那么函数将返回一个空指针。
+ */
 unsigned char *lpSeek(unsigned char *lp, long index)
 {
     int forward = 1; /* Seek forward by default. */

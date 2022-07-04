@@ -44,8 +44,6 @@ typedef char *sds;
 
 /* Note: sdshdr5 is never used, we just access the flags byte directly.
  * However is here to document the layout of type 5 SDS strings.
- *
- * sdshdr5 最大可分配缓存为 1<<5
  */
 struct __attribute__((__packed__)) sdshdr5
 {
@@ -58,14 +56,16 @@ struct __attribute__((__packed__)) sdshdr5
  * 通过位运算，就可以知道 sdshdr 的类型，然后通过指针偏移，就可以得到 sdshdr 的指针，然后获取整个头部信息
  *
  * sdshdr8 最大可分配的缓存为 1<<8. 根据实际要保存字符串的大小，选择合适的数据类型，可以达到节约内存的目的
+ *
+ * __attribute__((__packed__)): 采用 1 字节内存对齐
  */
 struct __attribute__((__packed__)) sdshdr8
 {
-    uint8_t len; /* used */                                       // 已经使用的缓存长度
+    uint8_t len; /* used */                                       // buf 中已经使用的缓存长度, 也就是 sds 变量的内存大小
     uint8_t alloc; /* excluding the header and null terminator */ // 表示除了 header 和 buf 中 nullptr 结束符之外分配的缓存长度
     unsigned char flags; /* 3 lsb of type, 5 unused bits */       // 低三位保存 header 类型信息
 
-    char buf[]; // 动态分配的缓存，也是 sds 变量指向的地址。保存真实的数据，且最后以 '\0' 结尾
+    char buf[]; // 动态分配的缓存，也是 sds 变量指向的地址。保存真实的数据，且最后以 '\0' 结尾（分配缓存时，一般会多分配一个字节的长度放置 \0 结束符）
 };
 
 struct __attribute__((__packed__)) sdshdr16
@@ -97,7 +97,7 @@ struct __attribute__((__packed__)) sdshdr64
 #define SDS_TYPE_64 4
 #define SDS_TYPE_MASK 7
 #define SDS_TYPE_BITS 3
-#define SDS_HDR_VAR(T, s) struct sdshdr##T *sh = (void *)((s) - (sizeof(struct sdshdr##T)));
+#define SDS_HDR_VAR(T, s) struct sdshdr##T *sh = (void *)((s) - (sizeof(struct sdshdr##T))); // 计算并返回 sds 变量对应的 sdshdr 指针
 #define SDS_HDR(T, s) ((struct sdshdr##T *)((s) - (sizeof(struct sdshdr##T)))) // 获取 sds 变量对应的 sdshdr 的头指针
 #define SDS_TYPE_5_LEN(f) ((f) >> SDS_TYPE_BITS)
 

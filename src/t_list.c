@@ -56,11 +56,13 @@ void listTypePush(robj *subject, robj *value, int where)
     }
 }
 
+// 使用长度为 sz 的字符串 data 创建一个字符串对象
 void *listPopSaver(unsigned char *data, unsigned int sz)
 {
     return createStringObject((char *)data, sz);
 }
 
+// 从列表对象底层的快速链表的头部或者尾部弹出一个对象
 robj *listTypePop(robj *subject, int where)
 {
     long long vlong;
@@ -69,8 +71,7 @@ robj *listTypePop(robj *subject, int where)
     int ql_where = where == LIST_HEAD ? QUICKLIST_HEAD : QUICKLIST_TAIL;
     if (subject->encoding == OBJ_ENCODING_QUICKLIST)
     {
-        if (quicklistPopCustom(subject->ptr, ql_where, (unsigned char **)&value,
-                               NULL, &vlong, listPopSaver))
+        if (quicklistPopCustom(subject->ptr, ql_where, (unsigned char **)&value, NULL, &vlong, listPopSaver))
         {
             if (!value)
                 value = createStringObjectFromLongLong(vlong);
