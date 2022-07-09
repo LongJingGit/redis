@@ -1954,6 +1954,9 @@ void checkChildrenDone(void)
  * 4. 检测生成 RDB 文件以及重写 AOF 文件的后台子进程的运行情况, 在子进程结束时，通过 backgroundSaveDoneHandler 和 backgroundRewriteDoneHandle 回调函数来对后续的工作进行处理
  * 5. 在没有后台子进程生成 RDB 文件或者重写 AOF 文件的情况下，检测是否满足生成 RDB 文件以及重写 AOF 文件的条件；如果条件满足，则通过对应的函数接口来启动后台子进程处理相关逻辑
  * 6. 调用 replicationCron 来处理主从复制功能的心跳
+ * 7. 更新系统 LRU 时间戳
+ *
+ * serverCron 接口主要是由 定时器回调函数触发的
  */
 int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData)
 {
@@ -2006,7 +2009,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData)
      *
      * Note that you can change the resolution altering the
      * LRU_CLOCK_RESOLUTION define. */
-    server.lruclock = getLRUClock();
+    server.lruclock = getLRUClock();        // 更新 LRU 时间戳
 
     /* Record the max memory used since the server was started. */
     if (zmalloc_used_memory() > server.stat_peak_memory)
@@ -2084,7 +2087,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData)
     }
 
     /* We need to do a few operations on clients asynchronously. */
-    clientsCron();  // 在这里会计算每个 client 的空闲时间，如果超时，将尝试释放 client
+    clientsCron(); // 在这里会计算每个 client 的空闲时间，如果超时，将尝试释放 client
 
     /* Handle background operations on Redis databases. */
     databasesCron();
@@ -2337,7 +2340,7 @@ void beforeSleep(struct aeEventLoop *eventLoop)
     flushAppendOnlyFile(0);
 
     /* Handle writes with pending output buffers. */
-    handleClientsWithPendingWritesUsingThreads();   // 尝试将 client 的输出缓冲区的数据发送出去
+    handleClientsWithPendingWritesUsingThreads(); // 尝试将 client 的输出缓冲区的数据发送出去
 
     /* Close clients that need to be closed asynchronous */
     freeClientsInAsyncFreeQueue();
@@ -2600,7 +2603,7 @@ void initServerConfig(void)
      * redis.conf using the rename-command directive. */
     server.commands = dictCreate(&commandTableDictType, NULL);
     server.orig_commands = dictCreate(&commandTableDictType, NULL);
-    populateCommandTable();    // 将 redisCommandTable 中的命令信息插入到 redisServer.commands 哈希表中
+    populateCommandTable(); // 将 redisCommandTable 中的命令信息插入到 redisServer.commands 哈希表中
     server.delCommand = lookupCommandByCString("del");
     server.multiCommand = lookupCommandByCString("multi");
     server.lpushCommand = lookupCommandByCString("lpush");
@@ -3098,7 +3101,7 @@ void initServer(void)
 
     /* Open the TCP listening socket for the user commands. */
     if (server.port != 0 &&
-        listenToPort(server.port, server.ipfd, &server.ipfd_count) == C_ERR)        // 创建 tcp 监听 socket
+        listenToPort(server.port, server.ipfd, &server.ipfd_count) == C_ERR) // 创建 tcp 监听 socket
         exit(1);
     if (server.tls_port != 0 &&
         listenToPort(server.tls_port, server.tlsfd, &server.tlsfd_count) == C_ERR)
@@ -3659,7 +3662,7 @@ void call(client *c, int flags)
     }
 
     start = server.ustime;
-    c->cmd->proc(c);        // 执行命令
+    c->cmd->proc(c);            // 执行命令
     duration = ustime() - start;
     dirty = server.dirty - dirty;
     if (dirty < 0)
@@ -3691,6 +3694,7 @@ void call(client *c, int flags)
 
     /* Log the command into the Slow log if needed, and populate the
      * per-command statistics that we show in INFO commandstats. */
+    // 如果设置了 CMD_CALL_SLOWLOG 标记，那么如果需要的话，将其记录到系统慢日志之中
     if (flags & CMD_CALL_SLOWLOG && !(c->cmd->flags & CMD_SKIP_SLOWLOG))
     {
         char *latency_event = (c->cmd->flags & CMD_FAST) ? "fast-command" : "command";
@@ -3698,6 +3702,7 @@ void call(client *c, int flags)
         slowlogPushEntryIfNeeded(c, c->argv, c->argc, duration);
     }
 
+    // 如果设置了 CMD_CALL_STATS 标志, 那么更新该命令的总用时以及执行次数
     if (flags & CMD_CALL_STATS)
     {
         /* use the real command that was executed (cmd and lastamc) may be
@@ -3708,6 +3713,7 @@ void call(client *c, int flags)
     }
 
     /* Propagate the command into the AOF and replication link */
+    // 如果设置了 CMD_CALL_PROPAGATE 标志, 那么将该命令追加到 AOF 文件中并发送给 Slave 实例
     if (flags & CMD_CALL_PROPAGATE &&
         (c->flags & CLIENT_PREVENT_PROP) != CLIENT_PREVENT_PROP)
     {
@@ -4143,7 +4149,7 @@ int processCommand(client *c)
     }
     else
     {
-        call(c, CMD_CALL_FULL);     // 执行命令的核心接口
+        call(c, CMD_CALL_FULL); // 执行命令的核心接口
         c->woff = server.master_repl_offset;
         if (listLength(server.ready_keys))
             handleClientsBlockedOnKeys();
@@ -5918,6 +5924,7 @@ int main(int argc, char **argv)
     uint8_t hashseed[16];
     getRandomBytes(hashseed, sizeof(hashseed));
     dictSetHashFunctionSeed(hashseed);
+    // 判断是否以哨兵模式启动: 一般是以 redis-sentinel, redis-server --sentinel 两种方式启动哨兵模式
     server.sentinel_mode = checkForSentinelMode(argc, argv);
     initServerConfig();
     ACLInit(); /* The ACL subsystem must be initialized ASAP because the
@@ -5938,8 +5945,8 @@ int main(int argc, char **argv)
      * data structures with master nodes to monitor. */
     if (server.sentinel_mode)
     {
-        initSentinelConfig();
-        initSentinel();
+        initSentinelConfig();       // 初始化节点默认配置
+        initSentinel();             // 初始化节点状态
     }
 
     /* Check if we need to start in redis-check-rdb/aof mode. We just execute
@@ -6034,7 +6041,7 @@ int main(int argc, char **argv)
     server.supervised = redisIsSupervised(server.supervised_mode);
     int background = server.daemonize && !server.supervised;
     if (background)
-        daemonize();    // 以守护进程的方式运行
+        daemonize(); // 以守护进程的方式运行
 
     serverLog(LL_WARNING, "oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo");
     serverLog(LL_WARNING,
@@ -6121,7 +6128,7 @@ int main(int argc, char **argv)
     else
     {
         InitServerLast();
-        sentinelIsRunning();
+        sentinelIsRunning();        // 启动哨兵模式
         if (server.supervised_mode == SUPERVISED_SYSTEMD)
         {
             redisCommunicateSystemd("STATUS=Ready to accept connections\n");
