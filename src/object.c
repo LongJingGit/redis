@@ -91,14 +91,23 @@ robj *createRawStringObject(const char *ptr, size_t len)
 /* Create a string object with encoding OBJ_ENCODING_EMBSTR, that is
  * an object where the sds string is actually an unmodifiable string
  * allocated in the same chunk as the object itself. */
+/**
+ * OBJ_ENCODING_EMBSTR 编码方式的 robj 对象的内存结构如下：
+ *
+ * <type:OBJ_STRING><encoding:OBJ_ENCODING_EMBSTR><lru><refcount><ptr>|<sds.len><sds.alloc><sds.flags><sds.buf>
+ *
+ * robj 对象与底层的 sds 数据是处于一整块连续的内存中的, robj.ptr 指向 sds.buf
+ */
 robj *createEmbeddedStringObject(const char *ptr, size_t len)
 {
     robj *o = zmalloc(sizeof(robj) + sizeof(struct sdshdr8) + len + 1);
-    struct sdshdr8 *sh = (void *)(o + 1);
+    struct sdshdr8 *sh = (void *)(o + 1);  // FIXME: +1？ 为什么不是 +8。sdshdr 的地址即 robj.ptr 应该在 robj 头部向后偏移 8 字节处
+    // struct sdshdr8 *sh = (void *)(o + sizeof(robj) - sizeof(void*));
 
     o->type = OBJ_STRING;
     o->encoding = OBJ_ENCODING_EMBSTR;
-    o->ptr = sh + 1;
+    o->ptr = sh + 1;    // FIXME: 指向 sdshdr.buf ? sdshdr8 的头部为 sizeof(sdshdr8) 字节
+    // o->ptr = sh + sizeof(sdshdr8);
     o->refcount = 1;
     if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU)
     {
@@ -136,9 +145,9 @@ robj *createEmbeddedStringObject(const char *ptr, size_t len)
 robj *createStringObject(const char *ptr, size_t len)
 {
     if (len <= OBJ_ENCODING_EMBSTR_SIZE_LIMIT)
-        return createEmbeddedStringObject(ptr, len);
+        return createEmbeddedStringObject(ptr, len);       // sds 数据存储在 robj 数据的后面，是一块连续的内存
     else
-        return createRawStringObject(ptr, len);
+        return createRawStringObject(ptr, len);     // robj 数据和要存储的 sds 数据在内存上是分离的, robj.ptr 指针指向 sds 数据
 }
 
 /* Create a string object from a long long value. When possible returns a
@@ -147,7 +156,14 @@ robj *createStringObject(const char *ptr, size_t len)
  * If valueobj is non zero, the function avoids returning a shared
  * integer, because the object is going to be used as value in the Redis key
  * space (for instance when the INCR command is used), so we want LFU/LRU
- * values specific for each key. */
+ * values specific for each key.
+ *
+ * 对给定的整型值 value, 返回其对应的字符串对象。
+ * 如果 valueobj 为 1, 那么 redis 会强制为 value 创建一个独立的字符串对象；
+ * 否则如果 value 小于 OBJ_SHARED_INTEGERS, redis 会为 value 返回系统创建的共享对象
+ *
+ * 系统创建的共享对象是在 shared.integers 中
+ */
 robj *createStringObjectFromLongLongWithOptions(long long value, int valueobj)
 {
     robj *o;
@@ -217,7 +233,10 @@ robj *createStringObjectFromLongDouble(long double value, int humanfriendly)
  * (or a string object that contains a representation of a small integer)
  * will always result in a fresh object that is unshared (refcount == 1).
  *
- * The resulting object always has refcount set to 1. */
+ * The resulting object always has refcount set to 1.
+ *
+ * 拷贝一个字符串对象，并确保返回的对象和原来的对象具有相同的编码类型
+ */
 robj *dupStringObject(const robj *o)
 {
     robj *d;
@@ -418,6 +437,7 @@ void incrRefCount(robj *o)
     }
 }
 
+// 减少引用计数，如果引用计数为 1, 则尝试释放对象
 void decrRefCount(robj *o)
 {
     if (o->refcount == 1)
@@ -486,6 +506,10 @@ robj *resetRefCount(robj *obj)
     return obj;
 }
 
+/**
+ * 执行客户端命令前对数据类型进行校验
+ * 当 client 对某一个 key 执行命令时，需要判断这个 key 对应 value 的对象类型是否符合命令对应的类型. 比如一个列表数据执行字符串命令，显然是不合适的
+ */
 int checkType(client *c, robj *o, int type)
 {
     if (o->type != type)
@@ -496,11 +520,13 @@ int checkType(client *c, robj *o, int type)
     return 0;
 }
 
+// 从 sds 数据中尝试解码出整型数据，并将解码出来的整型值通过 llval 返回
 int isSdsRepresentableAsLongLong(sds s, long long *llval)
 {
     return string2ll(s, sdslen(s), llval) ? C_OK : C_ERR;
 }
 
+// 从 robj 对象中尝试解析出整型值，并通过 llval 返回
 int isObjectRepresentableAsLongLong(robj *o, long long *llval)
 {
     serverAssertWithInfo(NULL, o, o->type == OBJ_STRING);
@@ -520,6 +546,7 @@ int isObjectRepresentableAsLongLong(robj *o, long long *llval)
  * in case there is more than 10% of free space at the end of the SDS
  * string. This happens because SDS strings tend to overallocate to avoid
  * wasting too much time in allocations when appending to the string. */
+// 当 sds 中空闲内存的大小已经超过了被使用内存的 10%, 会对空闲内存进行释放
 void trimStringObjectIfNeeded(robj *o)
 {
     if (o->encoding == OBJ_ENCODING_RAW &&
@@ -530,6 +557,7 @@ void trimStringObjectIfNeeded(robj *o)
 }
 
 /* Try to encode a string object in order to save space */
+// 尝试对字符串对象 o 的内存进行优化
 robj *tryObjectEncoding(robj *o)
 {
     long value;
@@ -545,46 +573,47 @@ robj *tryObjectEncoding(robj *o)
     /* We try some specialized encoding only for objects that are
      * RAW or EMBSTR encoded, in other words objects that are still
      * in represented by an actually array of chars. */
+    // 只有 OBJ_ENCODING_RAW/OBJ_ENCODING_EMBSTR 编码的字符串对象才有优化的必要
     if (!sdsEncodedObject(o))
         return o;
 
     /* It's not safe to encode shared objects: shared objects can be shared
      * everywhere in the "object space" of Redis and may end in places where
      * they are not handled. We handle them only as values in the keyspace. */
-    if (o->refcount > 1)
+    if (o->refcount > 1)    // 如果引用计数大于1，说明对象正在被共享，此时进行对象的内存优化是不安全的
         return o;
 
     /* Check if we can represent this string as a long integer.
      * Note that we are sure that a string larger than 20 chars is not
      * representable as a 32 nor 64 bit integer. */
     len = sdslen(s);
-    if (len <= 20 && string2l(s, len, &value))
+    if (len <= 20 && string2l(s, len, &value))  // 检查是否可以将该字符串编码为一个长整数
     {
         /* This object is encodable as a long. Try to use a shared object.
          * Note that we avoid using shared integers when maxmemory is used
          * because every object needs to have a private LRU field for the LRU
          * algorithm to work well. */
-        if ((server.maxmemory == 0 ||
-             !(server.maxmemory_policy & MAXMEMORY_FLAG_NO_SHARED_INTEGERS)) &&
-            value >= 0 &&
-            value < OBJ_SHARED_INTEGERS)
+        if ((server.maxmemory == 0 || !(server.maxmemory_policy & MAXMEMORY_FLAG_NO_SHARED_INTEGERS))
+          && value >= 0
+          && value < OBJ_SHARED_INTEGERS)
         {
-            decrRefCount(o);
-            incrRefCount(shared.integers[value]);
-            return shared.integers[value];
+            decrRefCount(o);        // 减少对象 o 的引用计数
+            incrRefCount(shared.integers[value]);       // 增加共享对象的引用计数
+            return shared.integers[value];      // 直接使用整型字符串共享对象
         }
         else
         {
             if (o->encoding == OBJ_ENCODING_RAW)
             {
-                sdsfree(o->ptr);
+                sdsfree(o->ptr);    // 释放 sds数据
                 o->encoding = OBJ_ENCODING_INT;
-                o->ptr = (void *)value;
+                o->ptr = (void *)value; // 将该整型数直接保存到 ptr 的指针
                 return o;
             }
             else if (o->encoding == OBJ_ENCODING_EMBSTR)
             {
-                decrRefCount(o);
+                // 如果是 OBJ_ENCODING_EMBSTR 编码类型，则需要释放整个对象，然后创建一个新的整型字符串对象
+                decrRefCount(o);    // 减少引用计数，如果引用计数为 1, 在会尝试释放
                 return createStringObjectFromLongLongForValue(value);
             }
         }
@@ -614,14 +643,18 @@ robj *tryObjectEncoding(robj *o)
      * We do that only for relatively large strings as this branch
      * is only entered if the length of the string is greater than
      * OBJ_ENCODING_EMBSTR_SIZE_LIMIT. */
-    trimStringObjectIfNeeded(o);
+    trimStringObjectIfNeeded(o);        // 对对象 o 的底层数据内存进行优化
 
     /* Return the original object. */
     return o;
 }
 
 /* Get a decoded version of an encoded object (returned as a new object).
- * If the object is already raw-encoded just increment the ref count. */
+ * If the object is already raw-encoded just increment the ref count.
+ * 只对字符串对象生效. 会从传入参数所对应的对象返回一个新的对象.
+ * 1. 如果原始对象是一个字符串类型对象，那么会增加其引用计数，并将这个原始对象返回；
+ * 2. 如果原始对象是一个整数型对象时，则会将这个整数转化为一个字符串形式，然后为其创建一个字符串类型的新对象
+ */
 robj *getDecodedObject(robj *o)
 {
     robj *dec;
@@ -656,6 +689,7 @@ robj *getDecodedObject(robj *o)
 #define REDIS_COMPARE_BINARY (1 << 0)
 #define REDIS_COMPARE_COLL (1 << 1)
 
+// 根据 flag 来调用 memcmp 或者 strcoll 来对比两个字符串对象 a 和 b 的底层数据. 如果对比的是整型字符串，会将数字转化为字符串
 int compareStringObjectsWithFlags(robj *a, robj *b, int flags)
 {
     serverAssertWithInfo(NULL, a, a->type == OBJ_STRING && b->type == OBJ_STRING);
@@ -701,6 +735,7 @@ int compareStringObjectsWithFlags(robj *a, robj *b, int flags)
 }
 
 /* Wrapper for compareStringObjectsWithFlags() using binary comparison. */
+// 比较两个字符串对象 a b
 int compareStringObjects(robj *a, robj *b)
 {
     return compareStringObjectsWithFlags(a, b, REDIS_COMPARE_BINARY);
@@ -731,6 +766,7 @@ int equalStringObjects(robj *a, robj *b)
     }
 }
 
+// 获取对象 o 的底层数据的大小
 size_t stringObjectLen(robj *o)
 {
     serverAssertWithInfo(NULL, o, o->type == OBJ_STRING);
@@ -889,6 +925,7 @@ int getLongLongFromObjectOrReply(client *c, robj *o, long long *target, const ch
     return C_OK;
 }
 
+// 从 robj 对象中尝试解析出整型值，并将解码出来的数据通过 targe 返回；如果解码失败，会通知给对应的客户端 client
 int getLongFromObjectOrReply(client *c, robj *o, long *target, const char *msg)
 {
     long long value;
@@ -969,6 +1006,7 @@ size_t streamRadixTreeMemoryUsage(rax *rax)
  * case of aggregated data types where only "sample_size" elements
  * are checked and averaged to estimate the total size. */
 #define OBJ_COMPUTE_SIZE_DEF_SAMPLES 5 /* Default sample size. */
+// 计算 redisObject 对象 o 在内存中占用的字节数. 是一个近似数值
 size_t objectComputeSize(robj *o, size_t sample_size)
 {
     sds ele, ele2;

@@ -249,18 +249,23 @@ int pubsubSubscribePattern(client *c, robj *pattern)
         pat->client = c;
         listAddNodeTail(server.pubsub_patterns, pat);     // 将这个模式数据插入到服务器对应的链表中
         /* Add the client to the pattern -> list of clients hash table */
+
+        // 查找该 pattern 在 redisServer.pubsub_patterns_dict 中是否存在, 如果不存在, 说明是一个新的 pattern
         de = dictFind(server.pubsub_patterns_dict, pattern);
         if (de == NULL)
         {
-            clients = listCreate();
+            clients = listCreate(); // 创建客户端链表，用来保存订阅该 pattern 的客户端
+            // 将 pattern-clients 作为 key-value 保存到 redisServer.pubsub_patters_dic 中
             dictAdd(server.pubsub_patterns_dict, pattern, clients);
             incrRefCount(pattern);
         }
         else
         {
+            // 如果已经存在客户端链表, 说明该 pattern 不是新的, 只需要获取 clients 链表, 然后将当前 client 加入到 clients 的尾部即可
             clients = dictGetVal(de);
         }
-        listAddNodeTail(clients, c);
+
+        listAddNodeTail(clients, c);    // 将 client 加入到订阅该 pattern 的客户端链表 clients 尾部
     }
     /* Notify the client */
     addReplyPubsubPatSubscribed(c, pattern);
@@ -375,15 +380,18 @@ int pubsubPublishMessage(robj *channel, robj *message)
             receivers++;
         }
     }
+
     /* Send to clients listening to matching channels */
-    di = dictGetIterator(server.pubsub_patterns_dict);
+    di = dictGetIterator(server.pubsub_patterns_dict);  // 读取所有的订阅模式数据
     if (di)
     {
         channel = getDecodedObject(channel);
+        // 遍历存储所有订阅模式的 hash 表, 找到匹配 channel 的模式, 然后向对应的客户端链表上的每一个客户端发送消息
         while ((de = dictNext(di)) != NULL)
         {
             robj *pattern = dictGetKey(de);
             list *clients = dictGetVal(de);
+            // 判断 pattern 与 channel 是否匹配
             if (!stringmatchlen((char *)pattern->ptr,
                                 sdslen(pattern->ptr),
                                 (char *)channel->ptr,
@@ -391,7 +399,7 @@ int pubsubPublishMessage(robj *channel, robj *message)
                 continue;
 
             listRewind(clients, &li);
-            while ((ln = listNext(&li)) != NULL)
+            while ((ln = listNext(&li)) != NULL)    // 依次向客户端链表上的每一个客户端发送数据
             {
                 client *c = listNodeValue(ln);
                 addReplyPubsubPatMessage(c, pattern, channel, message);
@@ -401,6 +409,7 @@ int pubsubPublishMessage(robj *channel, robj *message)
         decrRefCount(channel);
         dictReleaseIterator(di);
     }
+
     return receivers;
 }
 

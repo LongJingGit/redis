@@ -62,15 +62,14 @@ int activeExpireCycleTryExpire(redisDb *db, dictEntry *de, long long now)
     if (now > t)
     {
         sds key = dictGetKey(de);       // 获取 entry 的 key
-        robj *keyobj = createStringObject(key, sdslen(key));
+        robj *keyobj = createStringObject(key, sdslen(key));    // 使用 key 创建一个 redisObject 对象
 
-        propagateExpire(db, keyobj, server.lazyfree_lazy_expire);
+        propagateExpire(db, keyobj, server.lazyfree_lazy_expire);   // 将删除指令同步给 slave
         if (server.lazyfree_lazy_expire)
             dbAsyncDelete(db, keyobj);
         else
             dbSyncDelete(db, keyobj);
-        notifyKeyspaceEvent(NOTIFY_EXPIRED,
-                            "expired", keyobj, db->id);
+        notifyKeyspaceEvent(NOTIFY_EXPIRED, "expired", keyobj, db->id);
         signalModifiedKey(NULL, db, keyobj);
         decrRefCount(keyobj);
         server.stat_expiredkeys++;
@@ -122,7 +121,7 @@ int activeExpireCycleTryExpire(redisDb *db, dictEntry *de, long long now)
  * The configured expire "effort" will modify the baseline parameters in
  * order to do more work in both the fast and slow expire cycles.
  *
- * 清理流程：
+ * 清理流程：以 server.active_expire_effort == 1 为例.
  * 1. 轮询每个 DB, 检查其过期字典 expires, 从所有带过期时间的 key 中，随机选取 20 个样本 key，检查这些 key 是否过期，如果过期则删除。如果 20 个样本中，超过 5 个 key 都过期，即过期比例大于 25%，就继续从该 DB 的过期字典 expires 中，再随机取样 20 个 key 进行过期清理，持续循环，直到选择的 20 个样本 key 中，过期的 key 数小于等于 5，当前这个 DB 则清理完毕，然后继续轮询下一个 DB。
  *
  * 2. 如果 DB 的过期字典 expires 中，过期 key 太多，一直持续循环回收，会占用大量主线程时间，所以 Redis 设置了 "type" 参数以指定快循环还是慢循环过期策略:
@@ -133,7 +132,7 @@ int activeExpireCycleTryExpire(redisDb *db, dictEntry *de, long long now)
  */
 
 #define ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP 20    /* Keys for each DB loop. */
-#define ACTIVE_EXPIRE_CYCLE_FAST_DURATION 1000  /* Microseconds. */
+#define ACTIVE_EXPIRE_CYCLE_FAST_DURATION 1000  /* Microseconds. 微妙 */
 #define ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC 25   /* Max % of CPU to use. */
 #define ACTIVE_EXPIRE_CYCLE_ACCEPTABLE_STALE 10 /* % of stale keys after which \
                                                    we do extra efforts. */
@@ -175,13 +174,12 @@ void activeExpireCycle(int type)
         /* Don't start a fast cycle if the previous cycle did not exit
          * for time limit, unless the percentage of estimated stale keys is
          * too high. Also never repeat a fast cycle for the same period
-         * as the fast cycle total duration itself. */
-        /**
-         * 上一次执行快速清理的时间限制还没到期，不会再次执行快速清理
-         * 比如上一次快速清理的时间限制为 1000us(但是实际只消耗了 10us 就完成了清理),这次快速清理的时间距离上次清理的时间不足 1000us, 不会再执行清理操作
+         * as the fast cycle total duration itself.
+         *
+         * 上一次执行快速清理的时间限制还没到期, 且过期键的比例小于 10%, 不会执行快速清理
+         *   比如上一次快速清理的时间限制为 1000us(但是实际只消耗了 10us 就完成了清理),这次快速清理的时间距离上次执行清理的时间不足 1000us,不会再执行清理操作
          */
-        if (!timelimit_exit &&
-            server.stat_expired_stale_perc < config_cycle_acceptable_stale)
+        if (!timelimit_exit && server.stat_expired_stale_perc < config_cycle_acceptable_stale)
             return;
 
         if (start < last_fast_cycle + (long long)config_cycle_fast_duration * 2)
@@ -204,11 +202,13 @@ void activeExpireCycle(int type)
      * time per iteration. Since this function gets called with a frequency of
      * server.hz times per second, the following is the max amount of
      * microseconds we can spend in this function. */
+    // 计算每次清理过期 key 的时间限制. 如果 effort 为 0, timelimit == 25ms
     timelimit = config_cycle_slow_time_perc * 1000000 / server.hz / 100;
     timelimit_exit = 0;
     if (timelimit <= 0)
         timelimit = 1;
 
+    // 如果是快循环回收方式, 则将清理过期 key 的时间限制为 1ms
     if (type == ACTIVE_EXPIRE_CYCLE_FAST)
         timelimit = config_cycle_fast_duration; /* in microseconds. */
 

@@ -3063,7 +3063,12 @@ void killRDBChild(void)
 }
 
 /* Spawn an RDB child that writes the RDB to the sockets of the slaves
- * that are currently in SLAVE_STATE_WAIT_BGSAVE_START state. */
+ * that are currently in SLAVE_STATE_WAIT_BGSAVE_START state.
+ *
+ * 在开启数据传输之前，遍历redisServer.slaves中所有的Slave，收集处于SLAVE_STATE_WAIT_BGSAVE_START状态的Slave，收集其对应网络连接的套接字文件描述符，并用replicationSetupSlaveForFullResync，将其状态切换至SLAVE_STATE_WAIT_BGSAVE_END。
+ * 创建子进程，在子进程之中通过上面收集到的套接字文件描述符调用rioInitWithFdset来初始化一个通用IO对象rio，
+ * 最后子进程调用rdbSaveRioWithEOFMark这个接口，完成RDB文件数据的生成与传输
+ */
 int rdbSaveToSlavesSockets(rdbSaveInfo *rsi)
 {
     listNode *ln;
@@ -3106,19 +3111,19 @@ int rdbSaveToSlavesSockets(rdbSaveInfo *rsi)
     server.rdb_pipe_numconns = 0;
     server.rdb_pipe_numconns_writing = 0;
     listRewind(server.slaves, &li);
-    while ((ln = listNext(&li)))
+    while ((ln = listNext(&li)))        // 遍历 server.slaves 中的所有 slaves
     {
         client *slave = ln->value;
         if (slave->replstate == SLAVE_STATE_WAIT_BGSAVE_START)
         {
             server.rdb_pipe_conns[server.rdb_pipe_numconns++] = slave->conn;
-            replicationSetupSlaveForFullResync(slave, getPsyncInitialOffset());
+            replicationSetupSlaveForFullResync(slave, getPsyncInitialOffset()); // 切换状态至 SLAVE_STATE_WAIT_BGSAVE_END
         }
     }
 
     /* Create the child process. */
     openChildInfoPipe();
-    if ((childpid = redisFork(CHILD_TYPE_RDB)) == 0)
+    if ((childpid = redisFork(CHILD_TYPE_RDB)) == 0)    // 启动后台子进程进行无盘数据同步
     {
         /* Child */
         int retval, dummy;
@@ -3129,7 +3134,7 @@ int rdbSaveToSlavesSockets(rdbSaveInfo *rsi)
         redisSetProcTitle("redis-rdb-to-slaves");
         redisSetCpuAffinity(server.bgsave_cpulist);
 
-        retval = rdbSaveRioWithEOFMark(&rdb, NULL, rsi);
+        retval = rdbSaveRioWithEOFMark(&rdb, NULL, rsi);        // 生成 RDB 文件，并进行传输
         if (retval == C_OK && rioFlush(&rdb) == 0)
             retval = C_ERR;
 

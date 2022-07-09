@@ -38,27 +38,28 @@
 #define AE_OK 0
 #define AE_ERR -1
 
-#define AE_NONE 0       /* No events registered. */
-#define AE_READABLE 1   /* Fire when descriptor is readable. */
-#define AE_WRITABLE 2   /* Fire when descriptor is writable. */
-#define AE_BARRIER 4    /* With WRITABLE, never fire the event if the
-                           READABLE event already fired in the same event
-                           loop iteration. Useful when you want to persist
-                           things to disk before sending replies, and want
-                           to do that in a group fashion. */
+#define AE_NONE 0     /* No events registered. */
+#define AE_READABLE 1 /* Fire when descriptor is readable. */
+#define AE_WRITABLE 2 /* Fire when descriptor is writable. */
+#define AE_BARRIER 4  /* With WRITABLE, never fire the event if the      \
+                         READABLE event already fired in the same event  \
+                         loop iteration. Useful when you want to persist \
+                         things to disk before sending replies, and want \
+                         to do that in a group fashion. */
 
-#define AE_FILE_EVENTS (1<<0)
-#define AE_TIME_EVENTS (1<<1)
-#define AE_ALL_EVENTS (AE_FILE_EVENTS|AE_TIME_EVENTS)
-#define AE_DONT_WAIT (1<<2)
-#define AE_CALL_BEFORE_SLEEP (1<<3)
-#define AE_CALL_AFTER_SLEEP (1<<4)
+// redis 的事件驱动模型主要关注两种事件: 文件事件和时间事件
+#define AE_FILE_EVENTS (1 << 0) // 文件事件
+#define AE_TIME_EVENTS (1 << 1) // 时间事件
+#define AE_ALL_EVENTS (AE_FILE_EVENTS | AE_TIME_EVENTS)
+#define AE_DONT_WAIT (1 << 2)
+#define AE_CALL_BEFORE_SLEEP (1 << 3)
+#define AE_CALL_AFTER_SLEEP (1 << 4)
 
 #define AE_NOMORE -1
 #define AE_DELETED_EVENT_ID -1
 
 /* Macros */
-#define AE_NOTUSED(V) ((void) V)
+#define AE_NOTUSED(V) ((void)V)
 
 struct aeEventLoop;
 
@@ -68,22 +69,24 @@ typedef int aeTimeProc(struct aeEventLoop *eventLoop, long long id, void *client
 typedef void aeEventFinalizerProc(struct aeEventLoop *eventLoop, void *clientData);
 typedef void aeBeforeSleepProc(struct aeEventLoop *eventLoop);
 
-/* File event structure */
-typedef struct aeFileEvent {
+// File event structure. 文件事件结构体
+typedef struct aeFileEvent
+{
     int mask; /* one of AE_(READABLE|WRITABLE|BARRIER) */
     aeFileProc *rfileProc;
     aeFileProc *wfileProc;
     void *clientData;
 } aeFileEvent;
 
-/* Time event structure */
-typedef struct aeTimeEvent {
-    long long id; /* time event identifier. */
-    long when_sec; /* seconds */
-    long when_ms; /* milliseconds */
-    aeTimeProc *timeProc;
-    aeEventFinalizerProc *finalizerProc;
-    void *clientData;
+// Time event structure. 时间事件结构体
+typedef struct aeTimeEvent
+{
+    long long id; /* time event identifier. */ // 时间事件 ID, 用来标识事件
+    long when_sec; /* seconds */               // 时间发生的秒数
+    long when_ms; /* milliseconds */           // 时间发生的毫秒数
+    aeTimeProc *timeProc;                      // 时间到期时的回调函数
+    aeEventFinalizerProc *finalizerProc;       // 事件最终被删除时的回调函数
+    void *clientData;                          // 客户端数据
     struct aeTimeEvent *prev;
     struct aeTimeEvent *next;
     int refcount; /* refcount to prevent timer events from being
@@ -91,24 +94,26 @@ typedef struct aeTimeEvent {
 } aeTimeEvent;
 
 /* A fired event */
-typedef struct aeFiredEvent {
-    int fd;
-    int mask;
+typedef struct aeFiredEvent
+{
+    int fd;   // 触发事件的文件描述符
+    int mask; // 触发事件的掩码
 } aeFiredEvent;
 
 /* State of an event based program */
-typedef struct aeEventLoop {
+typedef struct aeEventLoop
+{
     int maxfd;   /* highest file descriptor currently registered */
-    int setsize; /* max number of file descriptors tracked */
+    int setsize; // max number of file descriptors tracked. 事件循环中监听的文件描述符的数量.
     long long timeEventNextId;
-    time_t lastTime;     /* Used to detect system clock skew */
-    aeFileEvent *events; /* Registered events */
-    aeFiredEvent *fired; /* Fired events */
+    time_t lastTime;     // Used to detect system clock skew. 上次处理事件的时间戳, 用于检测时钟偏差
+    aeFileEvent *events; // Registered events.      注册的事件, 一个 aeFileEvent 的数组, 数组的每一个元素都是
+    aeFiredEvent *fired; // Fired events.   已经触发的事件
     aeTimeEvent *timeEventHead;
     int stop;
-    void *apidata; /* This is used for polling API specific data */
-    aeBeforeSleepProc *beforesleep;
-    aeBeforeSleepProc *aftersleep;
+    void *apidata;                  /* This is used for polling API specific data */
+    aeBeforeSleepProc *beforesleep; // 每次进入事件循环时调用函数的函数指针
+    aeBeforeSleepProc *aftersleep;  // 每次退出事件循环时调用函数的函数指针
     int flags;
 } aeEventLoop;
 
@@ -117,12 +122,12 @@ aeEventLoop *aeCreateEventLoop(int setsize);
 void aeDeleteEventLoop(aeEventLoop *eventLoop);
 void aeStop(aeEventLoop *eventLoop);
 int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
-        aeFileProc *proc, void *clientData);
+                      aeFileProc *proc, void *clientData);
 void aeDeleteFileEvent(aeEventLoop *eventLoop, int fd, int mask);
 int aeGetFileEvents(aeEventLoop *eventLoop, int fd);
 long long aeCreateTimeEvent(aeEventLoop *eventLoop, long long milliseconds,
-        aeTimeProc *proc, void *clientData,
-        aeEventFinalizerProc *finalizerProc);
+                            aeTimeProc *proc, void *clientData,
+                            aeEventFinalizerProc *finalizerProc);
 int aeDeleteTimeEvent(aeEventLoop *eventLoop, long long id);
 int aeProcessEvents(aeEventLoop *eventLoop, int flags);
 int aeWait(int fd, int mask, long long milliseconds);

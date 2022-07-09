@@ -30,7 +30,7 @@ size_t lazyfreeGetPendingObjectsCount(void)
  * For lists the function returns the number of elements in the quicklist
  * representing the list.
  *
- * 获取对象 obj 中存储节点的数量，以此判断该对象是否需要异步释放。
+ * 获取对象 obj 中存储节点的数量，以此判断该对象是否需要异步释放: 当节点数量大于 64 时，才需要异步释放, 否则采用同步释放
  */
 size_t lazyfreeGetFreeEffort(robj *obj)
 {
@@ -103,11 +103,11 @@ int dbAsyncDelete(redisDb *db, robj *key)
     /* If the value is composed of a few allocations, to free in a lazy way
      * is actually just slower... So under a certain limit we just free
      * the object synchronously. */
-    dictEntry *de = dictUnlink(db->dict, key->ptr);
+    dictEntry *de = dictUnlink(db->dict, key->ptr);     // 将 key 从主字典中删除，但是并没有释放该 key 对应 entry 的内存
     if (de)
     {
         robj *val = dictGetVal(de);
-        size_t free_effort = lazyfreeGetFreeEffort(val); // 获取 val 中存储的元素个数
+        size_t free_effort = lazyfreeGetFreeEffort(val); // 获取 val 中存储的元素个数, 判断是否需要异步释放
 
         /* If releasing the object is too much work, do it in the background
          * by adding the object to the lazy free list.
@@ -124,8 +124,8 @@ int dbAsyncDelete(redisDb *db, robj *key)
         if (free_effort > LAZYFREE_THRESHOLD && val->refcount == 1)
         {
             atomicIncr(lazyfree_objects, 1);
-            bioCreateBackgroundJob(BIO_LAZY_FREE, val, NULL, NULL);
-            dictSetVal(db->dict, de, NULL);
+            bioCreateBackgroundJob(BIO_LAZY_FREE, val, NULL, NULL); // 将 value 递交给 BIO 线程去释放
+            dictSetVal(db->dict, de, NULL);         // 将原本 key 对应的 value 直接置空
         }
     }
 

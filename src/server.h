@@ -650,7 +650,7 @@ typedef struct RedisModuleDigest {
 typedef struct redisObject
 {
     /**
-     * redisObject 的数据类型. 比如: OBJ_STRING, OBJ_LIST, OBJ_SET, OBJ_ZSET, OBJ_HASH.
+     * redisObject 的数据类型. 比如: OBJ_STRING, OBJ_LIST, OBJ_SET, OBJ_ZSET, OBJ_HASH, OBJ_MODULE, OBJ_STREAM
      * 分别对应着: t_string, t_list, t_set, t_zset, t_hash.
      *
      * 同一种数据类型，底层可能使用不同的数据结构。比如 t_zset 底层可能使用 ziplist 或者 zskiplist, t_hash 底层可能使用 ziplist 或者 dict
@@ -665,7 +665,7 @@ typedef struct redisObject
                             * and most significant 16 bits access time). */
 
     int refcount; // 记录对象的引用计数，用来表示对象被共享的次数，共享使用时加 1，不再使用时减 1，当计数为 0 时表明该对象没有被使用，就会被释放，回收内存
-    void *ptr;  // 本对象使用的底层数据结构, 比如: sds, ziplist, quicklist, listpack, dict, zskiplist, zipmap, intset, adlist.
+    void *ptr;  // 实际保存数据的指针. 可能使用不同的底层数据结构来保存数据, 比如: sds, ziplist, quicklist, listpack, dict, zskiplist
 } robj;
 
 /* The a string name for an object's type as listed above
@@ -706,7 +706,7 @@ typedef struct redisDb
     // 主字典: 以 key-value 的形式存储当前 db 中的所有数据. key-value 都是 redisObject 类型
     dict *dict;                 /* The keyspace for this DB */
 
-    // 过期字典: 以 key-timeout 的形式存储 key 和过期时间
+    // 过期字典: 以 key-timeout 的形式存储 key 和过期时间. 如果主字典中 key 设置了过期时间 timeout, 会将这个 key 添加到过期字典中
     dict *expires;              /* Timeout of keys with a timeout set */
 
     /**
@@ -721,7 +721,7 @@ typedef struct redisDb
     // 当 client 使用 watch 指令来监控 key 时，这个 key 和 client 就会被保存到 watched_keys 这个哈希表中
     dict *watched_keys;         /* WATCHED keys for MULTI/EXEC CAS */
 
-    int id;                     /* Database ID */
+    int id; // Database ID. 表示当前 db 的编号, redis 最多可支持 16 个 db, 每个 db 的编号用 redisDb.id 来表示, 使用 select index 可以切换不同的 db
     long long avg_ttl;          /* Average TTL, just for stats */
     unsigned long expires_cursor; /* Cursor of the active expire cycle. */
     list *defrag_later;         /* List of key names to attempt to defrag one by one, gradually. */
@@ -1658,18 +1658,20 @@ typedef struct _redisSortOperation {
 } redisSortOperation;
 
 /* Structure to hold list iteration abstraction. */
-typedef struct {
-    robj *subject;
-    unsigned char encoding;
-    unsigned char direction; /* Iteration direction */
-    quicklistIter *iter;
-} listTypeIterator;
+typedef struct
+{
+    robj *subject;      // 当前迭代器所属的列表对象
+    unsigned char encoding;     // 当前对象所属的编码类型
+    unsigned char direction; // Iteration direction. 迭代器迭代方向
+    quicklistIter *iter;        // 底层快速链表对应的迭代器
+} listTypeIterator; // 和快速链表 quicklist 中的 quicklistIter 含义类似，用于描述 redis 列表对象类型的迭代器
 
 /* Structure for an entry while iterating over a list. */
-typedef struct {
+typedef struct
+{
     listTypeIterator *li;
     quicklistEntry entry; /* Entry in quicklist */
-} listTypeEntry;
+} listTypeEntry;    // 和快速链表 quicklist 中的 quicklistEntry 含义类似
 
 /* Structure to hold set iteration abstraction. */
 typedef struct {

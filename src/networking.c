@@ -2318,7 +2318,6 @@ void processInputBuffer(client *c)
          * 从 client->querybuf 中解析命令，将命令参数的个数存储到 client->argc 中，将命令参数的内容存储到 client->argv 中
          * NOTE: client->argv[0] 存储的就是命令名称
          */
-
         if (c->reqtype == PROTO_REQ_INLINE)
         {
             if (processInlineBuffer(c) != C_OK)
@@ -2417,7 +2416,8 @@ void readQueryFromClient(connection *conn)
     if (c->querybuf_peak < qblen)
         c->querybuf_peak = qblen;
     c->querybuf = sdsMakeRoomFor(c->querybuf, readlen);
-    nread = connRead(c->conn, c->querybuf + qblen, readlen);        // 读取内核缓冲区的数据
+    // 将 socket 内核缓冲区的数据读取到 client.querybuf 中, 后面直接使用 client.querybuf 中的数据进行解析
+    nread = connRead(c->conn, c->querybuf + qblen, readlen);
     if (nread == -1)
     {
         if (connGetState(conn) == CONN_STATE_CONNECTED)

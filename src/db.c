@@ -67,7 +67,7 @@ void updateLFU(robj *val)
  * NOTE: 该接口是底层接口，不可以直接通过 redis 的命令进行调用。一般是在 lookupKeyRead(),
  * lookupKeyWrite() 和 lookupKeyReadWithFlags() 接口中进行调用的。
  *
- * 在每次调用这个接口访问 key 之前, 需要先判断 key 是否过期，如果过期，则删除。对于读操作，还会根据查找结果，还会更新命中计数器和非命中计数器
+ * 在每次调用这个接口访问 key 之前, 需要先判断 key 是否过期，如果过期，则删除。对于读操作，还会根据查找结果，更新命中计数器和非命中计数器
  */
 robj *lookupKey(redisDb *db, robj *key, int flags)
 {
@@ -119,12 +119,15 @@ robj *lookupKey(redisDb *db, robj *key, int flags)
  * but still existing, in case this is a slave, since this API is called only
  * for read operations. Even if the key expiry is master-driven, we can
  * correctly report a key is expired on slaves even if the master is lagging
- * expiring our key via DELs in the replication link. */
+ * expiring our key via DELs in the replication link.
+ *
+ * 在 db 中查找 key 对应的 value. 在执行查找操作之前，会先检查 key 是否过期，如果过期则删除
+ */
 robj *lookupKeyReadWithFlags(redisDb *db, robj *key, int flags)
 {
     robj *val;
 
-    if (expireIfNeeded(db, key) == 1)
+    if (expireIfNeeded(db, key) == 1)   // 检查 key 是否过期
     {
         /* Key expired. If we are in the context of a master, expireIfNeeded()
          * returns 0 only when the key does not exist at all, so it's safe
@@ -446,6 +449,7 @@ robj *dbUnshareStringValue(redisDb *db, robj *key, robj *o)
  * The dbnum can be -1 if all the DBs should be emptied, or the specified
  * DB index if we want to empty only a single database.
  * The function returns the number of keys removed from the database(s). */
+// 清空 dbarray 的主字典和过期字典。如果 dbnum 为 -1, 则清空所有 db, 否则只清空指定 db, async 表示同步清理还是异步清理
 long long emptyDbStructure(redisDb *dbarray, int dbnum, int async, void(callback)(void *))
 {
     long long removed = 0;
@@ -495,6 +499,7 @@ long long emptyDbStructure(redisDb *dbarray, int dbnum, int async, void(callback
  * On success the function returns the number of keys removed from the
  * database(s). Otherwise -1 is returned in the specific case the
  * DB number is out of range, and errno is set to EINVAL. */
+// 清空 db 的所有键空间: 包括主字典和过期字典. 如果 dbnum 为 -1, 则清空所有 db, 否则清空指定 db. flags 表示同步清理还是异步清理
 long long emptyDb(int dbnum, int flags, void(callback)(void *))
 {
     int async = (flags & EMPTYDB_ASYNC);
@@ -738,6 +743,7 @@ void flushAllDataAndResetRDB(int flags)
 /* FLUSHDB [ASYNC]
  *
  * Flushes the currently SELECTed Redis DB. */
+// 清空 client.db.id 指定的 db
 void flushdbCommand(client *c)
 {
     int flags;
@@ -803,7 +809,7 @@ void unlinkCommand(client *c)
 /* EXISTS key1 key2 ... key_N.
  * Return value is the number of keys existing.
  *
- * 统计 db 的主字典中 key 的个数
+ * 统计 db 的主字典中 key 列表 [key1 key2 ... key_N] 中 key 的个数
  */
 void existsCommand(client *c)
 {
@@ -1197,7 +1203,7 @@ void scanCommand(client *c)
     scanGenericCommand(c, NULL, cursor);
 }
 
-// 获取 db 主字典中的存储元素的个数
+// 获取 db 主字典中 key 的个数
 void dbsizeCommand(client *c)
 {
     addReplyLongLong(c, dictSize(c->db->dict));
@@ -1555,6 +1561,7 @@ int removeExpire(redisDb *db, robj *key)
  * of an user calling a command 'c' is the client, otherwise 'c' is set
  * to NULL. The 'when' parameter is the absolute unix time in milliseconds
  * after which the key will no longer be considered valid. */
+// 给 key 设置一个毫秒级的过期时间戳 when
 void setExpire(client *c, redisDb *db, robj *key, long long when)
 {
     dictEntry *kde, *de;
@@ -1572,6 +1579,7 @@ void setExpire(client *c, redisDb *db, robj *key, long long when)
 
 /* Return the expire time of the specified key, or -1 if no expire
  * is associated with this key (i.e. the key is non volatile) */
+// 获取 key 的过期时间, -1 表示该 key 没有设置过期时间
 long long getExpire(redisDb *db, robj *key)
 {
     dictEntry *de;
@@ -1598,7 +1606,7 @@ long long getExpire(redisDb *db, robj *key)
  *
  * master 向所有的 slave 和 AOF 广播过期 key 的删除指令 DEL.
  *
- * slave 不会主动删除过期的 key，而是需要等待 master 发送的 del 删除指令之后，再对对应的 key 进行删除
+ * slave 不会主动删除过期的 key，而是需要等待 master 发送的 del 删除指令之后，再清理对应的 key
  **/
 void propagateExpire(redisDb *db, robj *key, int lazy)
 {
@@ -1618,6 +1626,7 @@ void propagateExpire(redisDb *db, robj *key, int lazy)
 }
 
 /* Check if the key is expired. */
+// 判断 key 是否过期
 int keyIsExpired(redisDb *db, robj *key)
 {
     mstime_t when = getExpire(db, key); // 获取 key 的过期时间
@@ -1639,7 +1648,7 @@ int keyIsExpired(redisDb *db, robj *key)
      * See issue #1525 on Github for more information. */
     if (server.lua_caller)
     {
-        now = server.lua_time_start;
+        now = server.lua_time_start;    // now 从 lua 脚本启动的时候开始算
     }
     /* If we are in the middle of a command execution, we still want to use
      * a reference time that does not change: in that case we just use the
@@ -1650,12 +1659,12 @@ int keyIsExpired(redisDb *db, robj *key)
      * while the first did not. */
     else if (server.fixed_time_expire > 0)
     {
-        now = server.mstime;
+        now = server.mstime;        // 如果是在命令的执行过程中，now 从命令执行的起始时间开始计算
     }
     /* For the other cases, we want to use the most fresh time we have. */
     else
     {
-        now = mstime();
+        now = mstime();     // now 从当前时间开始算
     }
 
     /* The key expired if the current (virtual or real) time is greater
@@ -1700,14 +1709,14 @@ int expireIfNeeded(redisDb *db, robj *key)
      * Still we try to return the right information to the caller,
      * that is, 0 if we think the key should be still valid, 1 if
      * we think the key is expired at this time. */
-    if (server.masterhost != NULL)  // 如果是 slave，也不进行清理操作，而是等待 master 发送过来的 del 指令
+    if (server.masterhost != NULL)  // 如果是 slave, 也不进行清理操作，而是等待 master 发送过来的 del 指令
         return 1;   // 虽然 slave 不会主动删除过期 key，但是这里仍然返回 1，通知调用者该 key 已经过期，保持和 master 上的行为一致
 
     // 如果是 master，或者是单一实例的 redis，则尝试删除过期 key，并通知 slave
     /* Delete the key */
     server.stat_expiredkeys++;
     propagateExpire(db, key, server.lazyfree_lazy_expire);  // 广播过期 key 的删除指令
-    notifyKeyspaceEvent(NOTIFY_EXPIRED,"expired", key, db->id);
+    notifyKeyspaceEvent(NOTIFY_EXPIRED, "expired", key, db->id);
 
     // 根据配置信息，选择同步或者异步的方式清理 key
     int retval = server.lazyfree_lazy_expire ? dbAsyncDelete(db, key) : dbSyncDelete(db, key);

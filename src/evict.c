@@ -69,7 +69,7 @@ static struct evictionPoolEntry *EvictionPoolLRU;
  * in a reduced-bits format that can be used to set and check the
  * object->lru field of redisObject structures.
  *
- * 调用 mtime() 获取 LRU 时钟。mtime() 这个系统调用需要在内核态和用户态之间进行切换，所以如果频繁调用，
+ * 调用 mtime() 获取 LRU 时间戳。mtime() 这个系统调用需要在内核态和用户态之间进行切换，所以如果频繁调用，
  * 会造成性能严重下降，所以 redis 在服务器的全局变量中使用了 server.lruclock 来缓存当前的 lru。
  * redis 会在系统事件循环的心跳 serverCron 调用该接口缓存 LRU
  */
@@ -83,10 +83,10 @@ unsigned int getLRUClock(void)
  * LRU clock (as it should be in production servers) we return the
  * precomputed value, otherwise we need to resort to a system call.
  *
- * 正常情况下，LRU 跳数的频率为 1000 毫秒 1 次，而系统心跳则是 1000 毫秒 10 次，对于这种情况 LRU_CLOCK 函数会
- * 从 redisServer.lruclock 缓存中获取当前的 LRU 时间戳跳数；当然我们可以通过修改代码的方式提高 LRU 跳数的频率，
- * 并且可以通过配置降低系统心跳的频率。
- * 对于系统心跳频率低于 LRU 频率时，redisServer.lruclock 缓存无法及时更新，对于这种情况，通过 getLRUClock 函数来获取时间戳跳数。
+ * server.lruclock 是在系统的心跳 serverCron 中更新的.
+ * 1. 正常情况下，LRU 跳数的频率 LRU_CLOCK_RESOLUTION 为 1000ms/1次，而系统心跳则是 1000ms/10次，系统心跳的频率远高于 LRU 频率, 所有可以通过读取
+ * server.lrulock 来获取当前的 LRU 时间戳
+ * 2. 如果系统心跳频率低于 LRU 频率时，redisServer.lruclock 缓存无法及时更新，对于这种情况，通过 getLRUClock 函数来获取时间戳跳数。
  */
 unsigned int LRU_CLOCK(void)
 {
@@ -105,13 +105,13 @@ unsigned int LRU_CLOCK(void)
 /* Given an object returns the min number of milliseconds the object was never
  * requested, using an approximated LRU algorithm. */
 // 计算一个 redis 对象没有被访问的空闲时间 idle。LRU 淘汰策略需要根据该 idle 值选择 key 然后进行淘汰
-// idle: 该数据从上次访问到现在的间隔时间
+// idle: 该数据从上次访问到现在的间隔时间, 单位 ms
 unsigned long long estimateObjectIdleTime(robj *o)
 {
-    unsigned long long lruclock = LRU_CLOCK();
-    if (lruclock >= o->lru)
+    unsigned long long lruclock = LRU_CLOCK(); // 计算当前的 lru 时间戳
+    if (lruclock >= o->lru)                    // 当前的 lru 时间戳大于 redis 对象的 lru 时间戳
     {
-        return (lruclock - o->lru) * LRU_CLOCK_RESOLUTION;
+        return (lruclock - o->lru) * LRU_CLOCK_RESOLUTION; // 计算空闲 idle, 单位 ms
     }
     else
     {
@@ -158,6 +158,7 @@ unsigned long long estimateObjectIdleTime(robj *o)
  * evicted in the whole database. */
 
 /* Create a new eviction pool. */
+// 创建一个淘汰池, 淘汰池实际上就是一个数组
 void evictionPoolAlloc(void)
 {
     struct evictionPoolEntry *ep;
@@ -171,6 +172,7 @@ void evictionPoolAlloc(void)
         ep[j].cached = sdsnewlen(NULL, EVPOOL_CACHED_SDS_SIZE);
         ep[j].dbid = 0;
     }
+
     EvictionPoolLRU = ep;
 }
 
@@ -183,18 +185,22 @@ void evictionPoolAlloc(void)
  * idle time are on the left, and keys with the higher idle time on the
  * right.
  *
- * 收集合适的 key，将相关的数据填充到 evictionPool 这个淘汰池中。
+ * 从主字典或者过期字典中选择 key, 然后按照 idle 从小到大的顺序将 key 插入到淘汰池 pool 中
  *
  * 当 Redis 内存占用超过阀值后，按策略从主字典 dict 或者过期字典 expires 中随机选择 N 个 key，N 默认是 5，计算每个 key 的 idle 值，
  * 按 idle 值从小到大的顺序插入 evictionPool 中，然后选择 idle 最大的那个 key，进行淘汰。
+ *
+ * sampledict: 主字典或者过期字典
+ * keydict: 主字典
  */
 void evictionPoolPopulate(int dbid, dict *sampledict, dict *keydict, struct evictionPoolEntry *pool)
 {
     int j, k, count;
     dictEntry *samples[server.maxmemory_samples];
 
+    // 从哈希表 sampledict 中随机获取 server.maxmemory_samples 个 key, 获取的 key 存储在 samples 指针数组中
     count = dictGetSomeKeys(sampledict, samples, server.maxmemory_samples);
-    for (j = 0; j < count; j++)
+    for (j = 0; j < count; j++) // 将指针数组中的 key 按照 idle 从小到大的顺序插入到淘汰池 pool 中
     {
         unsigned long long idle;
         sds key;
@@ -219,7 +225,7 @@ void evictionPoolPopulate(int dbid, dict *sampledict, dict *keydict, struct evic
          * just a score where an higher score means better candidate. */
         if (server.maxmemory_policy & MAXMEMORY_FLAG_LRU)
         {
-            idle = estimateObjectIdleTime(o);
+            idle = estimateObjectIdleTime(o); // 如果使用 LRU 的策略, 计算空闲时间 idle
         }
         else if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU)
         {
@@ -246,10 +252,9 @@ void evictionPoolPopulate(int dbid, dict *sampledict, dict *keydict, struct evic
          * First, find the first empty bucket or the first populated
          * bucket that has an idle time smaller than our idle time. */
         k = 0;
-        while (k < EVPOOL_SIZE &&
-               pool[k].key &&
-               pool[k].idle < idle)
+        while (k < EVPOOL_SIZE && pool[k].key && pool[k].idle < idle)
             k++;
+
         if (k == 0 && pool[EVPOOL_SIZE - 1].key != NULL)
         {
             /* Can't insert if the element is < the worst element we have
@@ -411,7 +416,7 @@ unsigned long LFUDecrAndReturn(robj *o)
  * used memory: the eviction should use mostly data size. This function
  * returns the sum of AOF and slaves buffer.
  *
- * 统计内存使用情况：对于 AOF 所使用的缓存，以及主从模式下 Slave 的输出缓存所使用的内存，不会被统计进去
+ * 统计 AOF 以及 salve 使用的缓存情况
  */
 size_t freeMemoryGetNotCountedMemory(void)
 {
@@ -487,7 +492,7 @@ int getMaxmemoryState(size_t *total, size_t *logical, size_t *tofree, float *lev
     /* Remove the size of slaves output buffers and AOF buffer from the
      * count of used memory. */
     mem_used = mem_reported;
-    size_t overhead = freeMemoryGetNotCountedMemory();
+    size_t overhead = freeMemoryGetNotCountedMemory();  // 计算 AOF/Slave 使用的缓存
     mem_used = (mem_used > overhead) ? mem_used - overhead : 0;
 
     /* Compute the ratio of memory usage. */
@@ -531,7 +536,7 @@ int getMaxmemoryState(size_t *total, size_t *logical, size_t *tofree, float *lev
  * Otherwise if we are over the memory limit, but not enough memory
  * was freed to return back under the limit, the function returns C_ERR.
  *
- * 淘汰机制的核心函数。
+ * 淘汰机制的核心函数：
  *
  * Redis 在执行命令请求时，会检查当前内存占用是否超过 maxmemory 的数值，如果超过，则按照设置的淘汰策略，进行删除淘汰 key 操作。
  */
@@ -554,7 +559,7 @@ int freeMemoryIfNeeded(void)
      * expires and evictions of keys not being performed. */
     if (clientsArePaused())
         return C_OK;
-    if (getMaxmemoryState(&mem_reported, NULL, &mem_tofree, NULL) == C_OK)
+    if (getMaxmemoryState(&mem_reported, NULL, &mem_tofree, NULL) == C_OK)      // 获取 redis 的内存使用状态
         return C_OK;
 
     mem_freed = 0;
@@ -591,29 +596,29 @@ int freeMemoryIfNeeded(void)
                     dict = (server.maxmemory_policy & MAXMEMORY_FLAG_ALLKEYS) ? db->dict : db->expires;
                     if ((keys = dictSize(dict)) != 0)
                     {
-                        evictionPoolPopulate(i, dict, db->dict, pool);
+                        evictionPoolPopulate(i, dict, db->dict, pool);      // 遍历每个 db, 按照淘汰策略选择 key 放入淘汰池 pool
                         total_keys += keys;
                     }
                 }
+
                 if (!total_keys)
                     break; /* No keys to evict. */
 
                 /* Go backward from best to worst element to evict. */
-                for (k = EVPOOL_SIZE - 1; k >= 0; k--)
+                for (k = EVPOOL_SIZE - 1; k >= 0; k--)  // pool 中存储的 key 是按照 idle 的值从小到大排列的，下标越大，idle 越大
                 {
                     if (pool[k].key == NULL)
                         continue;
-                    bestdbid = pool[k].dbid;
+
+                    bestdbid = pool[k].dbid;   // 从淘汰池中选择 idle 最大的 key
 
                     if (server.maxmemory_policy & MAXMEMORY_FLAG_ALLKEYS)
                     {
-                        de = dictFind(server.db[pool[k].dbid].dict,
-                                      pool[k].key);
+                        de = dictFind(server.db[pool[k].dbid].dict, pool[k].key);       // 在主字典中查找 key 对应的 dictEntry
                     }
                     else
                     {
-                        de = dictFind(server.db[pool[k].dbid].expires,
-                                      pool[k].key);
+                        de = dictFind(server.db[pool[k].dbid].expires, pool[k].key);    // 在过期字典中查找 key 的 dictEntry
                     }
 
                     /* Remove the entry from the pool. */
@@ -626,7 +631,7 @@ int freeMemoryIfNeeded(void)
                      * a ghost and we need to try the next element. */
                     if (de)
                     {
-                        bestkey = dictGetKey(de);
+                        bestkey = dictGetKey(de);       // 找到了 idle 最大的 key-value
                         break;
                     }
                     else
@@ -663,7 +668,7 @@ int freeMemoryIfNeeded(void)
         if (bestkey)
         {
             db = server.db + bestdbid;
-            robj *keyobj = createStringObject(bestkey, sdslen(bestkey));
+            robj *keyobj = createStringObject(bestkey, sdslen(bestkey));    // 创建 idle 最大的 key-value 的 redisObject 类型的 key
             propagateExpire(db, keyobj, server.lazyfree_lazy_eviction);
             /* We compute the amount of memory freed by db*Delete() alone.
              * It is possible that actually the memory needed to propagate
@@ -680,15 +685,15 @@ int freeMemoryIfNeeded(void)
             if (server.lazyfree_lazy_eviction)
                 dbAsyncDelete(db, keyobj);
             else
-                dbSyncDelete(db, keyobj);
+                dbSyncDelete(db, keyobj);       // 从主字典中删除 key-value
+
             latencyEndMonitor(eviction_latency);
             latencyAddSampleIfNeeded("eviction-del", eviction_latency);
             delta -= (long long)zmalloc_used_memory();
             mem_freed += delta;
             server.stat_evictedkeys++;
             signalModifiedKey(NULL, db, keyobj);
-            notifyKeyspaceEvent(NOTIFY_EVICTED, "evicted",
-                                keyobj, db->id);
+            notifyKeyspaceEvent(NOTIFY_EVICTED, "evicted", keyobj, db->id);
             decrRefCount(keyobj);
             keys_freed++;
 

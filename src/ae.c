@@ -329,7 +329,12 @@ static int processTimeEvents(aeEventLoop *eventLoop)
      * Here we try to detect system clock skews, and force all the time
      * events to be processed ASAP when this happens: the idea is that
      * processing events earlier is less dangerous than delaying them
-     * indefinitely, and practice suggests it is. */
+     * indefinitely, and practice suggests it is.
+     *
+     * 如果系统的时钟被移动到未来，那么在再次处理时间事件之前，需要尝试对时钟进行修正。同时当这种情况发生时,
+     * redis 会通过将 te->when_sec 置为 0 的方式来强制提前处理队列中的时间事件。因为 redis 的作者认为,
+     * 当系统时间出现错位时, 提前处理时间事件比延后处理这些事件更加安全。
+     */
     if (now < eventLoop->lastTime)
     {
         te = eventLoop->timeEventHead;
@@ -339,6 +344,7 @@ static int processTimeEvents(aeEventLoop *eventLoop)
             te = te->next;
         }
     }
+
     eventLoop->lastTime = now;
 
     te = eventLoop->timeEventHead;
@@ -391,16 +397,16 @@ static int processTimeEvents(aeEventLoop *eventLoop)
 
             id = te->id;
             te->refcount++;
-            retval = te->timeProc(eventLoop, id, te->clientData);
+            retval = te->timeProc(eventLoop, id, te->clientData);       // 处理时间事件
             te->refcount--;
             processed++;
             if (retval != AE_NOMORE)
             {
-                aeAddMillisecondsToNow(retval, &te->when_sec, &te->when_ms);
+                aeAddMillisecondsToNow(retval, &te->when_sec, &te->when_ms);    // 对于周期性事件, 设置事件新的执行时间
             }
             else
             {
-                te->id = AE_DELETED_EVENT_ID;
+                te->id = AE_DELETED_EVENT_ID;   // 对于单次执行的事件，将事件 id 设置为 -1, 在下一次事件循环中从列表中删除该事件
             }
         }
         te = te->next;
@@ -500,9 +506,11 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
         numevents = aeApiPoll(eventLoop, tvp);
 
         /* After sleep callback. */
+        // 退出循环之前执行 aftersleep
         if (eventLoop->aftersleep != NULL && flags & AE_CALL_AFTER_SLEEP)
             eventLoop->aftersleep(eventLoop);
 
+        // 处理从 epoll_wait 中返回的事件
         for (j = 0; j < numevents; j++)
         {
             aeFileEvent *fe = &eventLoop->events[eventLoop->fired[j].fd];
@@ -521,6 +529,10 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
              * This is useful when, for instance, we want to do things
              * in the beforeSleep() hook, like fsyncing a file to disk,
              * before replying to a client. */
+            /**
+             * 一般情况下，我们会从 epoll_wait 返回的事件中, 先处理可读事件, 然后处理可写事件.
+             * 但是如果设置了 AE_BARRIER 标记, redis 会要求我们将执行顺序反过来, 先处理可写事件, 然后处理可读事件. 这样处理的目的是, 当我们需要在响应客户端请求之前，通过调用 beforeSleep 执行类似同步文件到磁盘的操作时，会很有用：
+             */
             int invert = fe->mask & AE_BARRIER;
 
             /* Note the "fe->mask & mask & ..." code: maybe an already
@@ -531,7 +543,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
              * inverted. */
             if (!invert && fe->mask & mask & AE_READABLE)
             {
-                fe->rfileProc(eventLoop, fd, fe->clientData, mask);
+                fe->rfileProc(eventLoop, fd, fe->clientData, mask);     // 如果没有设置 AE_BARRIER 标志, 先处理可读事件
                 fired++;
                 fe = &eventLoop->events[fd]; /* Refresh in case of resize. */
             }
@@ -541,7 +553,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
             {
                 if (!fired || fe->wfileProc != fe->rfileProc)
                 {
-                    fe->wfileProc(eventLoop, fd, fe->clientData, mask);
+                    fe->wfileProc(eventLoop, fd, fe->clientData, mask);     // 处理可写事件
                     fired++;
                 }
             }
@@ -554,7 +566,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
                 if ((fe->mask & mask & AE_READABLE) &&
                     (!fired || fe->wfileProc != fe->rfileProc))
                 {
-                    fe->rfileProc(eventLoop, fd, fe->clientData, mask);
+                    fe->rfileProc(eventLoop, fd, fe->clientData, mask); // 如果设置了 AE_BARRIER 标志, 先处理可写事件, 然后处理可读事件
                     fired++;
                 }
             }
@@ -564,13 +576,14 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
     }
     /* Check time events */
     if (flags & AE_TIME_EVENTS)
-        processed += processTimeEvents(eventLoop);
+        processed += processTimeEvents(eventLoop);      // 处理时间事件
 
     return processed; /* return the number of processed file/time events */
 }
 
 /* Wait for milliseconds until the given file descriptor becomes
  * writable/readable/exception */
+// 调用 pool 阻塞 fd 一段时间. 主要用于 redis 的一些同步阻塞操作，例如 master 与 slave 之间通过 sync 命令以同步阻塞的方式同步数据
 int aeWait(int fd, int mask, long long milliseconds)
 {
     struct pollfd pfd;
@@ -606,9 +619,7 @@ void aeMain(aeEventLoop *eventLoop)
     eventLoop->stop = 0;
     while (!eventLoop->stop)
     {
-        aeProcessEvents(eventLoop, AE_ALL_EVENTS |
-                                       AE_CALL_BEFORE_SLEEP |
-                                       AE_CALL_AFTER_SLEEP);
+        aeProcessEvents(eventLoop, AE_ALL_EVENTS | AE_CALL_BEFORE_SLEEP | AE_CALL_AFTER_SLEEP);
     }
 }
 

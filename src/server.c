@@ -2473,12 +2473,17 @@ void createSharedObjects(void)
     shared.zpopmax = createStringObject("ZPOPMAX", 7);
     shared.multi = createStringObject("MULTI", 5);
     shared.exec = createStringObject("EXEC", 4);
+
+    /**
+     * redis 在启动的时候会自动创建一组整型字符串对象供后续共享。
+     * 如果用户需要一个数值小于 OBJ_SHARED_INTEGERS 的整型字符串对象，可以从 shared.integers 中直接进行引用，而不需要进行创建
+     */
     for (j = 0; j < OBJ_SHARED_INTEGERS; j++)
     {
-        shared.integers[j] =
-            makeObjectShared(createObject(OBJ_STRING, (void *)(long)j));
+        shared.integers[j] = makeObjectShared(createObject(OBJ_STRING, (void *)(long)j));
         shared.integers[j]->encoding = OBJ_ENCODING_INT;
     }
+
     for (j = 0; j < OBJ_SHARED_BULKHDR_LEN; j++)
     {
         shared.mbulkhdr[j] = createObject(OBJ_STRING,

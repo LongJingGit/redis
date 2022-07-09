@@ -267,7 +267,8 @@ long long timeInMilliseconds(void)
  * than 0, and is smaller than 1 in most cases. The exact upper bound
  * depends on the running time of dictRehash(d,100).
  *
- * 在1毫秒的时间片内，执行若干次 dictRehash 操作，直到所有数据都已经 rehash, 或者执行时间超过1毫秒的时间片
+ * 在1毫秒的时间片内，执行若干次 dictRehash 操作，直到所有数据都已经 rehash, 或者执行时间超过1毫秒的时间片.
+ * 该接口在系统心跳中被主动调用，处理的是 redisDb.dict 主字典
  */
 int dictRehashMilliseconds(dict *d, int ms)
 {
@@ -299,7 +300,7 @@ int dictRehashMilliseconds(dict *d, int ms)
  *     猜测：redis 对于核心数据的操作都是单线程模式进行的，心跳中的 dictRehashMilliseconds() 在执行时会阻塞 redis 的核心主线程，
  * 此时不会对于哈希表有其他的操作，因此不需要判断关联安全迭代器的数量。而对于哈希表的迭代器，在迭代的过程中有可能基于逻辑的需求而对
  * 哈希表进行增加，查找等操作，故此需要判断关联安全迭代器的数量。
- *
+ * NOTE: 该接口主要处理的是 redisDb.dict 中的 value 对应的 散列对象, 集合对象, 有序集合对象 底层的哈希表
  */
 static void _dictRehashStep(dict *d)
 {

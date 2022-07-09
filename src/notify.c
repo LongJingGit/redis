@@ -35,11 +35,11 @@
  * Redis 将通知分为两类：
  * 1. 键空间通知: 键空间上的键发生了变化后而产生的通知。对于此类通知，redis 实际上执行了 `PUBLISH keyspace@:key event` 命令
  *
- *  其含义为，频道名为__keyspace@<db>__:key，表示这个频道上发布的是db编号数据库上的key这个键的消息，而event则是这条消息代表的key上的操作。
+ *  其含义为，频道名为 __keyspace@<db>__:key, 表示这个频道上发布的是 db 编号数据库上的 key 这个键的消息，而 event 则是这条消息代表的 key 上的操作。
  *
  * 2. 键事件通知: 服务器执行了某种操作之后产生的通知。对于此类通知，redis 实际上执行了 `PUBLISH keyevent@:event key` 命令
  *
- *  频道名为__keyevent@<db>__:event，表示这个频道上发布的是db编号数据库上的关于event这个事件的消息，这个事件可以是一个命令，也可以是类似过期或者淘汰这样的事件，key则是这条消息event对应操作的键
+ *  频道名为 __keyevent@<db>__:event，表示这个频道上发布的是 db 编号数据库上的关于 event 这个事件的消息，这个事件可以是一个命令，也可以是类似过期或者淘汰这样的事件, key 则是这条消息 event 对应操作的键
  */
 
 #include "server.h"
