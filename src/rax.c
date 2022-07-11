@@ -173,18 +173,23 @@ static inline void raxStackFree(raxStack *ts)
  *
  * 计算当 raxNode.size 为 nodesize 时, 考虑内存对齐，额外需要填充的字节数
  *
- * +4 是 raxNode 中 header 是 4 字节
+ * raxNode 的 header 是 4 字节, [iskey] [isnull] [iscompr] [size]
+ * raxNode.data 中包含着三种数据: 分支字符, 子节点的指针, 数据指针。子节点的指针和数据指针都是 4 字节或者 8 字节，而分支字符的长度不定，
+ * data 中存储这字符数组和指针两种数据类型，考虑到内存对齐, 需要在分支字符后面补充一些字节用以满足内存对齐
  */
 #define raxPadding(nodesize) ((sizeof(void *) - ((nodesize + 4) % sizeof(void *))) & (sizeof(void *) - 1))
 
 /* Return the pointer to the last child pointer in a node. For the compressed
- * nodes this is the only child pointer. */
+ * nodes this is the only child pointer.
+ * 获取存储在 raxNode.data 中的最后一个子节点的指针
+ */
 #define raxNodeLastChildPtr(n) ((raxNode **)(((char *)(n)) +           \
                                              raxNodeCurrentLength(n) - \
                                              sizeof(raxNode *) -       \
                                              (((n)->iskey && !(n)->isnull) ? sizeof(void *) : 0)))
 
 /* Return the pointer to the first child pointer. */
+// 获取存储在 raxNode.data 中的第一个子节点的指针
 #define raxNodeFirstChildPtr(n) ((raxNode **)((n)->data + \
                                               (n)->size + \
                                               raxPadding((n)->size)))
@@ -197,7 +202,7 @@ static inline void raxStackFree(raxStack *ts)
  *
  * sizeof(raxNode): header 大小
  *
- * (n)->size: 压缩数据的长度或者子节点的个数. FIXME: 如果是非压缩节点，为什么计算内存大小的时候还需要单独加上 (n)->size
+ * (n)->size: 压缩数据的长度或者子节点的个数. 或者可以理解为该节点中分支字符的字符个数，每个字符对应着一个子节点，分支字符保存在 raxNode.data 中
  *
  * raxPadding((n)->size): 内存对齐需要额外填充的字节数
  *
@@ -219,11 +224,12 @@ static inline void raxStackFree(raxStack *ts)
  * associated data pointer.
  * Returns the new node pointer. On out of memory NULL is returned.
  *
- * children: 待创建的 raxNode 具有的子节点数量; datafield: 该节点是否有存储数据指针的空间
+ * children: 待创建的 raxNode 具有的子节点数量，也表示该节点中保存的分支字符的个数
+ * datafield: 该节点是否有存储数据指针的空间
  */
 raxNode *raxNewNode(size_t children, int datafield)
 {
-    size_t nodesize = sizeof(raxNode) + children + raxPadding(children) + sizeof(raxNode *) * children; // FIXME: 为什么要 +children
+    size_t nodesize = sizeof(raxNode) + children + raxPadding(children) + sizeof(raxNode *) * children;
     if (datafield)
         nodesize += sizeof(void *);
     raxNode *node = rax_malloc(nodesize);
@@ -276,6 +282,11 @@ void raxSetData(raxNode *n, void *data)
     if (data != NULL)
     {
         n->isnull = 0;
+        /**
+         * 注意这里计算 data.value_ptr 地址的计算方式: n 是指向 raxNode 的指针, raxNodeCurrentLength(n) 计算出来是该节点的大小
+         * (char *)n + raxNodeCurrentLength(n) 会偏移到该节点内存地址的最后一个字节的下一个位置，将改地址减去 sizeof(void *),
+         * 就可以得到该基数树节点中数据节点 value_ptr 的地址
+         */
         void **ndata = (void **)((char *)n + raxNodeCurrentLength(n) - sizeof(void *)); // raxNode 在内存中是一块连续的内存，所以需要进行偏移
         memcpy(ndata, &data, sizeof(data));
     }
@@ -286,6 +297,7 @@ void raxSetData(raxNode *n, void *data)
 }
 
 /* Get the node auxiliary data. */
+// 获取指向基数树节点 raxNode 的数据指针 value_ptr
 void *raxGetData(raxNode *n)
 {
     if (n->isnull)
@@ -309,7 +321,7 @@ void *raxGetData(raxNode *n)
  * 向基数树节点 n 按照字典序插入字符 c 的子节点, 返回值为新的基数树节点的指针
  * 新创建的字符 c 的子节点的指针会通过 childptr 返回; 插入的这个节点在 raxNode.data 中的位置会通过 parentlink 返回
  *
- * NOTE: 插入的节点不能是压缩节点
+ * 注意: 插入的节点不能是压缩节点
  */
 raxNode *raxAddChild(raxNode *n, unsigned char c, raxNode **childptr, raxNode ***parentlink)
 {
@@ -318,16 +330,15 @@ raxNode *raxAddChild(raxNode *n, unsigned char c, raxNode **childptr, raxNode **
     size_t curlen = raxNodeCurrentLength(n); // 计算当前基数树 n 的内存大小
     n->size++;                               // 更新该节点上子节点的个数
     size_t newlen = raxNodeCurrentLength(n);    // 计算新增一个子节点之后，该节点的内存大小
-    n->size--; /* For now restore the orignal size. We'll update it only on
-                  success at the end. */
+    n->size--; /* For now restore the orignal size. We'll update it only on success at the end. */
 
     /* Alloc the new child we will link to 'n'. */
-    raxNode *child = raxNewNode(0, 0);      // 创建一个新的节点作为字符 c 的节点
+    raxNode *child = raxNewNode(0, 0);      // 创建一个新的节点作为字符 c 对应的子节点
     if (child == NULL)
         return NULL;
 
     /* Make space in the original node. */
-    raxNode *newn = rax_realloc(n, newlen); // 新增一个节点之后，可能导致原有节点的内存被重新分配
+    raxNode *newn = rax_realloc(n, newlen); // 扩容原来的节点，保存新插入的字符和对应的子节点
     if (newn == NULL)
     {
         rax_free(child);    // realloc 失败，释放子节点
@@ -365,7 +376,7 @@ raxNode *raxAddChild(raxNode *n, unsigned char c, raxNode **childptr, raxNode **
      * a child "c" in our case pos will be = 2 after the end of the following
      * loop. */
     int pos;
-    for (pos = 0; pos < n->size; pos++)     // 按照字典序寻找插入的位置
+    for (pos = 0; pos < n->size; pos++)     // 遍历 raxNode.data 中的每一个分支字符, 按照字典序寻找插入的位置
     {
         if (n->data[pos] > c)
             break;
@@ -376,6 +387,8 @@ raxNode *raxAddChild(raxNode *n, unsigned char c, raxNode **childptr, raxNode **
      * We will obtain something like that:
      *
      * [HDR*][abde][Aptr][Bptr][Dptr][Eptr][....][....]|AUXP|
+     *
+     * 将 value_ptr 指针移动到 raxNode 节点的最后位置
      */
     unsigned char *src, *dst;
     if (n->iskey && !n->isnull)
@@ -481,6 +494,7 @@ raxNode *raxCompressNode(raxNode *n, unsigned char *s, size_t len, raxNode **chi
         if (!n->isnull)
             newsize += sizeof(void *);
     }
+
     raxNode *newn = rax_realloc(n, newsize);
     if (newn == NULL)
     {
@@ -1076,6 +1090,7 @@ raxNode **raxFindParentLink(raxNode *parent, raxNode *child)
  * removal) is returned. Note that this function does not fix the pointer
  * of the parent node in its parent, so this task is up to the caller.
  * The function never fails for out of memory. */
+// 从基数树节点 parent 中删除子节点 child
 raxNode *raxRemoveChild(raxNode *parent, raxNode *child)
 {
     debugnode("raxRemoveChild before", parent);

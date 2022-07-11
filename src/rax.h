@@ -97,19 +97,18 @@
 #define RAX_NODE_MAX_SIZE ((1 << 29) - 1)
 typedef struct raxNode
 {
-    /* 表示当前节点是否是一个完整的 key. 如果节点是一个 key, 那么从基数树的根节点下降到当前节点的路径上的所有字符所组成的字符串便是 key-value
-     * 空间中的一个 key. 需要注意的是, 这个 key 是不包含当前节点的内容的, 另外 raxNode 只有是 key 的时候, 才会保存对应的 value，并拥有数据
+    /* 表示当前节点是否是一个完整的 key. 如果节点是一个 key, 那么从基数树的根节点下降到当前节点的路径上的所有字符所组成的字符串便是 key-value 空间中
+     * 的一个 key. 需要注意的是, 这个 key 是不包含当前节点的内容的, 另外 raxNode 只有是 key 的时候, 才会保存对应的 value，并拥有数据
      * 指针 value-ptr. */
     uint32_t iskey : 1; /* Does this node contain a key? */
 
-    /* 只有当 ikey 为 1 的时候，才会有数据指针 value-ptr. 但是也存在只有 key 没有 value 的情况。而 isnull 就是用来标记该节点是否为一个空节点。
-     * 如果 isnull 为 1, 说明该节点不需要为数据指针分配内存. */
+    // 是否存储有 value 值, value 值是保存在 data 中数据指针 value-ptr 指向的地址中的
     uint32_t isnull : 1; /* Associated value is NULL (don't store it). */
 
-    // 标记当前节点是普通节点还是压缩节点
+    // 标记当前节点是普通节点还是压缩节点，决定了 data 存储的数据结构
     uint32_t iscompr : 1; /* Node is compressed. */
 
-    // 如果是压缩节点，表示压缩数据的长度；如果是普通节点，则表示该节点的子节点的个数
+    // 该节点存储的字符个数. 如果是普通节点, 字符个数等于子节点个数
     uint32_t size : 29; /* Number of children, or compressed string len. */
 
     // 上面的四个字段, 共 32 字节, 为该节点的 header
@@ -126,7 +125,9 @@ typedef struct raxNode
      *      [header iscompr=0][abc][a-ptr][b-ptr][c-ptr](value-ptr?)
      *
      *   表示这个基数树节点具有三个子节点，分别通过匹配字符 a, b, c 来转移到对应的子节点，而这个节点与其子节点的关联是通过存储在 abc 后面的
-     * 三个子节点指针实现的. value-ptr 为该节点的数据指针
+     * 三个子节点指针实现的. value-ptr 为该节点的数据指针。
+     *
+     * 子节点的分支字符为 [abc], 子节点的指针为 [a-ptr][b-ptr][c-ptr], 数据指针为 (value-ptr?)
      *
      * if node is compressed (iscompr bit is 1) the node has 1 children.
      * In that case the 'size' bytes of the string stored immediately at
@@ -139,6 +140,8 @@ typedef struct raxNode
      *
      *      [header iscompr=1][xyz][z-ptr](value-ptr?)
      *
+     *  [xyz] 是压缩字符片段，子节点指针为 [z-ptr], 指向下一个子节点
+     *
      * Both compressed and not compressed nodes can represent a key
      * with associated data in the radix tree at any level (not just terminal
      * nodes).
@@ -147,23 +150,22 @@ typedef struct raxNode
      * (isnull=0), then after the raxNode pointers pointing to the
      * children, an additional value pointer is present (as you can see
      * in the representation above as "value-ptr" field).
-     *
-     * data 字段中存储子节点的分支字符, 子节点的指针, 以及数据指针 value-ptr. 类型都是 raxNode*
      */
     unsigned char data[];
 } raxNode;
 
 typedef struct rax
 {
-    raxNode *head;
-    uint64_t numele;
-    uint64_t numnodes;
+    raxNode *head;          // 基数树的根节点
+    uint64_t numele;        // key 的个数, 或者可以理解为 raxNode.ikey == 1 的节点个数
+    uint64_t numnodes;      // 节点个数
 } rax;
 
 /* Stack data structure used by raxLowWalk() in order to, optionally, return
  * a list of parent nodes to the caller. The nodes do not have a "parent"
  * field for space concerns, so we use the auxiliary stack when needed. */
 #define RAX_STACK_STATIC_ITEMS 32
+// 以深度优先的方式存储遍历基数树的过程中从根节点到当前节点路径上的节点指针
 typedef struct raxStack
 {
     void **stack;           /* Points to static_items or an heap allocated array. */

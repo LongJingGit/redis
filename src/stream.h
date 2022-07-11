@@ -8,21 +8,44 @@
  * a sequence counter. IDs generated in the same millisecond (or in a past
  * millisecond if the clock jumped backward) will use the millisecond time
  * of the latest generated ID and an incremented sequence. */
-// 表示消息 ID 的结构体
 typedef struct streamID
 {
-    uint64_t ms;  // Unix time in milliseconds. 消息产生的时间
-    uint64_t seq; // Sequence number. 如果同一毫秒 ms 内产生了多条消息, 会用 seq 进行区分
+    uint64_t ms;  // Unix time in milliseconds. 消息产生的毫秒级时间戳
+    uint64_t seq; // Sequence number. 如果同一毫秒内产生了多条消息, 会用 seq 进行区分, 当 streamID.ms 更新时, seq 会被清零
 } streamID;
 
 // Redis 中消息队列
 typedef struct stream
 {
-    rax *rax;         // The radix tree holding the stream. 存储消息队列中的消息, key 为消息 id, value 为紧凑列表 listpack
+    /**
+     * 用来存储消息内容的紧凑列表的内存结构如下:
+     *
+     *      <count> <deleted> <num-entry> <entry> <entry> <entry> ... <entry> <0>
+     *
+     * <count>  该紧凑列表中数据节点的个数(存储的消息数量)
+     * <delete> 该紧凑列表中被标记为删除的消息的数量
+     * <entry>
+     *
+     * listpack 中存储消息的格式:
+     * 1. 每个消息队列 stream 的内部的都使用一个紧凑列表来存储消息内容
+     * 2. 一个紧凑列表中有多个数据节点 entry, 每个数据节点都可以保存一条消息
+     * 3. 每个紧凑列表都使用该紧凑列表中的第一条消息的 ID(master_id) 作为这个紧凑列表在整个 stream.rax 基数树中的 key
+     * 4. redisServer.stream_node_max_bytes 限制了单一紧凑列表的内存上限, redisServer.stream_node_max_entries 限制了紧凑列表中数据节点
+     *  entry 的数量，当超过限制，redis 会分配一个新的紧凑列表存储在基数树中
+     * 5. 当需要删除一条消息时，通常不会将这条消息从紧凑列表中删除, 而是将其标记为删除状态。因为删除会涉及到内存的移动以及重新分配，会降低系统性能
+     */
+    rax *rax;         // The radix tree holding the stream. 存储消息队列中的消息. key 为消息ID, value 为用来存储消息内容的紧凑列表
+
     uint64_t length;  // Number of elements inside this stream. 存储在消息队列中的消息数量
     streamID last_id; // Zero if there are yet no items. 上一次生成消息的消息 id, 当插入新消息时, 会根据这个 id 来生成新的消息 id
-    rax *cgroups;     // Consumer groups dictionary: name -> streamCG. 关联该消息队列的消费者组. 消费者组的名字作为基数树的 key
+
+    // Consumer groups dictionary: name -> streamCG. 关联该消息队列的消费者组. 一个消息队列上可以关联多个消费者组, 消费者组的名字作为基数树的 key
+    rax *cgroups;
 } stream;
+
+/**
+
+ */
 
 /* We define an iterator to iterate stream items in an abstract way, without
  * caring about the radix tree + listpack representation. Technically speaking
@@ -85,7 +108,7 @@ typedef struct streamConsumer
                  will be identified in the consumer group
                  protocol. Case sensitive. */
 
-    // 该消费者还没有被确认的消息的列表
+    // 该消费者还没有确认的消息的列表
     rax *pel; /* Consumer specific pending entries list: all
                  the pending messages delivered to this
                  consumer not yet acknowledged. Keys are

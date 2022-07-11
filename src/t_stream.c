@@ -179,6 +179,7 @@ void streamLogListpackContent(unsigned char *lp)
 
 /* Convert the specified stream entry ID as a 128 bit big endian number, so
  * that the IDs can be sorted lexicographically. */
+// 将 sreamID 按照大端序编码成一个 128 比特的数据，这样可以保证编码后的shju依然是满足字典序的
 void streamEncodeID(void *buf, streamID *id)
 {
     uint64_t e[2];
@@ -190,6 +191,7 @@ void streamEncodeID(void *buf, streamID *id)
 /* This is the reverse of streamEncodeID(): the decoded ID will be stored
  * in the 'id' structure passed by reference. The buffer 'buf' must point
  * to a 128 bit big-endian encoded ID. */
+// 将一个 128 比特的数据解码成一个 streamID 对象
 void streamDecodeID(void *buf, streamID *id)
 {
     uint64_t e[2];
@@ -228,7 +230,12 @@ int streamCompareID(streamID *a, streamID *b)
  * 1. If an ID was given via 'use_id', but adding it failed since the
  *    current top ID is greater or equal. errno will be set to EDOM.
  * 2. If a size of a single element or the sum of the elements is too big to
- *    be stored into the stream. errno will be set to ERANGE. */
+ *    be stored into the stream. errno will be set to ERANGE.
+ *
+ * 向指定的消费队列 s 中插入一条新消息。
+ * 如果参数 added_id 不为 NULL, 新消息的消息ID会通过 added_id 返回；
+ * 如果 use_id 为 NULL, 表示该消息使用系统自动生成的消息ID, 也就是根据 stream.last_id 来生成新消息的 id, 否则使用 use_id
+ */
 int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_id, streamID *use_id)
 {
 
@@ -468,6 +475,7 @@ int streamAppendItem(stream *s, robj **argv, int64_t numfields, streamID *added_
  * 1) The stream is already shorter or equal to the specified max length.
  * 2) The 'approx' option is true and the head node had not enough elements
  *    to be deleted, leaving the stream with a number of elements >= maxlen.
+ * 将消息队列按照指定大小进行裁剪
  */
 int64_t streamTrimByLength(stream *s, size_t maxlen, int approx)
 {
@@ -927,7 +935,8 @@ void streamIteratorStop(streamIterator *si)
 }
 
 /* Delete the specified item ID from the stream, returning 1 if the item
- * was deleted 0 otherwise (if it does not exist). */
+ * was deleted 0 otherwise (if it does not exist).
+ * 从消息队列 s 中删除指定 id 的消息 */
 int streamDeleteItem(stream *s, streamID *id)
 {
     int deleted = 0;
@@ -1223,7 +1232,10 @@ size_t streamReplyWithRange(client *c, stream *s, streamID *start, streamID *end
  * This function is more expensive because it needs to inspect the PEL and then
  * seek into the radix tree of the messages in order to emit the full message
  * to the client. However clients only reach this code path when they are
- * fetching the history of already retrieved messages, which is rare. */
+ * fetching the history of already retrieved messages, which is rare.
+ *
+ * 从消息队列获取消息的底层接口，表示从消息队列 s 中获取消息 id 范围在 [start, end] 的消息，获取消息的数量由 count 指定
+ */
 size_t streamReplyWithRangeFromConsumerPEL(client *c, stream *s, streamID *start, streamID *end, size_t count, streamConsumer *consumer)
 {
     raxIterator ri;
@@ -1927,6 +1939,7 @@ cleanup: /* Cleanup. */
 /* Create a NACK entry setting the delivery count to 1 and the delivery
  * time to the current time. The NACK consumer will be set to the one
  * specified as argument of the function. */
+// 创建一个已经分发但是还未被确认的消息对象 streamNACK
 streamNACK *streamCreateNACK(streamConsumer *consumer)
 {
     streamNACK *nack = zmalloc(sizeof(*nack));
@@ -1947,6 +1960,7 @@ void streamFreeNACK(streamNACK *na)
  * nor will delete them from the stream, so when this function is called
  * to delete a consumer, and not when the whole stream is destroyed, the caller
  * should do some work before. */
+// 释放一个消费者
 void streamFreeConsumer(streamConsumer *sc)
 {
     raxFree(sc->pel); /* No value free callback: the PEL entries are shared
@@ -1959,22 +1973,30 @@ void streamFreeConsumer(streamConsumer *sc)
  * specified name and last server ID. If a consumer group with the same name
  * already existed NULL is returned, otherwise the pointer to the consumer
  * group is returned. */
+// 在消息队列 s 上创建一个名字为 name 的消费者组，同时指定消费者组的的消息分发游标 id, 最后将这个消费者组加入到消息队列的消费者组队列 stream.cgroups 中
 streamCG *streamCreateCG(stream *s, char *name, size_t namelen, streamID *id)
 {
+    // 如果该消息队列上没有关联的消费者组, 则创建一个消费者组。
     if (s->cgroups == NULL)
         s->cgroups = raxNew();
+
+    // 消息队列上已经关联了多个消费者组，查找消费者组 name 是否已经存在
     if (raxFind(s->cgroups, (unsigned char *)name, namelen) != raxNotFound)
         return NULL;
 
+    // 消费者组不存在，则创建一个消费者组
     streamCG *cg = zmalloc(sizeof(*cg));
     cg->pel = raxNew();
     cg->consumers = raxNew();
     cg->last_id = *id;
+
+    // 将消费者组关联到消息队列上
     raxInsert(s->cgroups, (unsigned char *)name, namelen, cg, NULL);
     return cg;
 }
 
 /* Free a consumer group and all its associated data. */
+// 释放消费者组 cg
 void streamFreeCG(streamCG *cg)
 {
     raxFreeWithCallback(cg->pel, (void (*)(void *))streamFreeNACK);
@@ -1997,34 +2019,40 @@ streamCG *streamLookupCG(stream *s, sds groupname)
  * consumer does not exist it is automatically created as a side effect
  * of calling this function, otherwise its last seen time is updated and
  * the existing consumer reference returned. */
+// 在消费者组 cg 中查找名字为 name 的消费者，如果找不到且 flags 不为 0, 则创建一个消费者并加入到消费者组中
 streamConsumer *streamLookupConsumer(streamCG *cg, sds name, int flags)
 {
     int create = !(flags & SLC_NOCREAT);
     int refresh = !(flags & SLC_NOREFRESH);
-    streamConsumer *consumer = raxFind(cg->consumers, (unsigned char *)name,
-                                       sdslen(name));
+    // 判断消息者组 cg 中是否存在消费者 name
+    streamConsumer *consumer = raxFind(cg->consumers, (unsigned char *)name, sdslen(name));
     if (consumer == raxNotFound)
     {
+        // 没有找到且不允许创建，返回 NULL
         if (!create)
             return NULL;
+
+        // 没有找到，创建一个名字为 name 的消费者，然后加入消费者组中
         consumer = zmalloc(sizeof(*consumer));
         consumer->name = sdsdup(name);
         consumer->pel = raxNew();
-        raxInsert(cg->consumers, (unsigned char *)name, sdslen(name),
-                  consumer, NULL);
+        raxInsert(cg->consumers, (unsigned char *)name, sdslen(name), consumer, NULL);
     }
+
     if (refresh)
         consumer->seen_time = mstime();
+
     return consumer;
 }
 
 /* Delete the consumer specified in the consumer group 'cg'. The consumer
  * may have pending messages: they are removed from the PEL, and the number
  * of pending messages "lost" is returned. */
+// 从消费者组 cg 中删除名字为 name 的消费者
 uint64_t streamDelConsumer(streamCG *cg, sds name)
 {
-    streamConsumer *consumer =
-        streamLookupConsumer(cg, name, SLC_NOCREAT | SLC_NOREFRESH);
+    // 查找消费者组 cg 中名字为 name 的消费者
+    streamConsumer *consumer = streamLookupConsumer(cg, name, SLC_NOCREAT | SLC_NOREFRESH);
     if (consumer == NULL)
         return 0;
 
@@ -2037,6 +2065,7 @@ uint64_t streamDelConsumer(streamCG *cg, sds name)
     raxSeek(&ri, "^", NULL, 0);
     while (raxNext(&ri))
     {
+        // 释放消费者组 cg 中已经分发但是还没有被该消费者 consumer 确认的消息
         streamNACK *nack = ri.data;
         raxRemove(cg->pel, ri.key, ri.key_len, NULL);
         streamFreeNACK(nack);
@@ -2044,8 +2073,8 @@ uint64_t streamDelConsumer(streamCG *cg, sds name)
     raxStop(&ri);
 
     /* Deallocate the consumer. */
-    raxRemove(cg->consumers, (unsigned char *)name, sdslen(name), NULL);
-    streamFreeConsumer(consumer);
+    raxRemove(cg->consumers, (unsigned char *)name, sdslen(name), NULL);        // 从消费者组中移除该消费者
+    streamFreeConsumer(consumer);       // 释放消费者 consumer
     return retval;
 }
 
