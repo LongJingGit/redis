@@ -2603,7 +2603,7 @@ void initServerConfig(void)
      * redis.conf using the rename-command directive. */
     server.commands = dictCreate(&commandTableDictType, NULL);
     server.orig_commands = dictCreate(&commandTableDictType, NULL);
-    populateCommandTable(); // 将 redisCommandTable 中的命令信息插入到 redisServer.commands 哈希表中
+    populateCommandTable();     // 将 redisCommandTable 中的命令信息插入到 redisServer.commands 和 redisServer.orig_commands 中
     server.delCommand = lookupCommandByCString("del");
     server.multiCommand = lookupCommandByCString("multi");
     server.lpushCommand = lookupCommandByCString("lpush");
@@ -2780,10 +2780,10 @@ int setOOMScoreAdj(int process_class)
  * server.maxclients to the value that we can actually handle. */
 void adjustOpenFilesLimit(void)
 {
-    rlim_t maxfiles = server.maxclients + CONFIG_MIN_RESERVED_FDS;
+    rlim_t maxfiles = server.maxclients + CONFIG_MIN_RESERVED_FDS;      // redis 实例运行需要支持打开的最大文件数量
     struct rlimit limit;
 
-    if (getrlimit(RLIMIT_NOFILE, &limit) == -1)
+    if (getrlimit(RLIMIT_NOFILE, &limit) == -1)     // 读取操作系统限制当前进程可以打开的最大文件数量，执行失败，返回 -1
     {
         serverLog(LL_WARNING, "Unable to obtain the current NOFILE limit (%s), assuming 1024 and setting the max clients configuration accordingly.",
                   strerror(errno));
@@ -2791,11 +2791,11 @@ void adjustOpenFilesLimit(void)
     }
     else
     {
-        rlim_t oldlimit = limit.rlim_cur;
+        rlim_t oldlimit = limit.rlim_cur;       // 获取系统的软限制
 
         /* Set the max number of files if the current limit is not enough
          * for our needs. */
-        if (oldlimit < maxfiles)
+        if (oldlimit < maxfiles)        // 系统软限制无法满足当前 redis 实例的运行要求，需要调整系统的软限制
         {
             rlim_t bestlimit;
             int setrlimit_error = 0;
@@ -2809,9 +2809,11 @@ void adjustOpenFilesLimit(void)
 
                 limit.rlim_cur = bestlimit;
                 limit.rlim_max = bestlimit;
-                if (setrlimit(RLIMIT_NOFILE, &limit) != -1)
+                if (setrlimit(RLIMIT_NOFILE, &limit) != -1)     // 调整系统软限制
                     break;
                 setrlimit_error = errno;
+
+                // 如果想要一次性将打开文件数量的限制调整为 bestlimit 的操作失败，则尝试逐步调整该限制，以尽可能的满足要求
 
                 /* We failed to set file limit to 'bestlimit'. Try with a
                  * smaller limit decrementing by a few FDs per iteration. */
@@ -2967,6 +2969,7 @@ int listenToPort(int port, int *fds, int *count)
             fds[*count] = anetTcpServer(server.neterr, port, server.bindaddr[j],
                                         server.tcp_backlog);
         }
+
         if (fds[*count] == ANET_ERR)
         {
             int net_errno = errno;
@@ -2980,6 +2983,7 @@ int listenToPort(int port, int *fds, int *count)
                 continue;
             return C_ERR;
         }
+
         anetNonBlock(NULL, fds[*count]);
         (*count)++;
     }
@@ -3045,14 +3049,18 @@ void initServer(void)
     int j;
 
     signal(SIGHUP, SIG_IGN);
+    /**
+     * 当 server close 了一个连接之后，若 client 继续发送数据，会收到一个 RST 响应，client 再往 server 发送数据时，
+     * 系统会发送一个 SIGPIPE 信号给 client 进程，告诉 client 该连接已经断开了，不能再写入了。
+     * SIGPIPE 信号的默认处理动作是 terminate(终止,退出), 如果 client 不想退出，可以在 client 端将 SIGPIPE 设置为 SIG_IGN, 忽略信号
+     */
     signal(SIGPIPE, SIG_IGN);
     setupSignalHandlers();
     makeThreadKillable();
 
     if (server.syslog_enabled)
     {
-        openlog(server.syslog_ident, LOG_PID | LOG_NDELAY | LOG_NOWAIT,
-                server.syslog_facility);
+        openlog(server.syslog_ident, LOG_PID | LOG_NDELAY | LOG_NOWAIT, server.syslog_facility);
     }
 
     /* Initialization after setting defaults from the config system. */
@@ -3086,9 +3094,9 @@ void initServer(void)
         exit(1);
     }
 
-    createSharedObjects();
-    adjustOpenFilesLimit();
-    server.el = aeCreateEventLoop(server.maxclients + CONFIG_FDSET_INCR);
+    createSharedObjects();      // 创建共享对象
+    adjustOpenFilesLimit();     // 调整操作系统对当前进程最多可以打开文件的数量的限制
+    server.el = aeCreateEventLoop(server.maxclients + CONFIG_FDSET_INCR);       // 创建事件循环 eventloop
     if (server.el == NULL)
     {
         serverLog(LL_WARNING,
@@ -3101,8 +3109,9 @@ void initServer(void)
 
     /* Open the TCP listening socket for the user commands. */
     if (server.port != 0 &&
-        listenToPort(server.port, server.ipfd, &server.ipfd_count) == C_ERR) // 创建 tcp 监听 socket
+        listenToPort(server.port, server.ipfd, &server.ipfd_count) == C_ERR) // 创建监听 socket: 调用 socket/bind/listen, 然后设置为非阻塞
         exit(1);
+
     if (server.tls_port != 0 &&
         listenToPort(server.tls_port, server.tlsfd, &server.tlsfd_count) == C_ERR)
         exit(1);
@@ -3191,7 +3200,7 @@ void initServer(void)
     /* Create the timer callback, this is our way to process many background
      * operations incrementally, like clients timeout, eviction of unaccessed
      * expired keys and so forth. */
-    if (aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR)
+    if (aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR)   // 向事件循环中注册时间事件回调函数 serverCron
     {
         serverPanic("Can't create event loop timers.");
         exit(1);
@@ -3209,6 +3218,7 @@ void initServer(void)
                 "Unrecoverable error creating server.ipfd file event.");
         }
     }
+
     for (j = 0; j < server.tlsfd_count; j++)
     {
         if (aeCreateFileEvent(server.el, server.tlsfd[j], AE_READABLE,
@@ -3218,6 +3228,7 @@ void initServer(void)
                 "Unrecoverable error creating server.tlsfd file event.");
         }
     }
+
     if (server.sofd > 0 && aeCreateFileEvent(server.el, server.sofd, AE_READABLE,
                                              acceptUnixHandler, NULL) == AE_ERR)
         serverPanic("Unrecoverable error creating server.sofd file event.");
@@ -3240,12 +3251,10 @@ void initServer(void)
     /* Open the AOF file if needed. */
     if (server.aof_state == AOF_ON)
     {
-        server.aof_fd = open(server.aof_filename,
-                             O_WRONLY | O_APPEND | O_CREAT, 0644);
+        server.aof_fd = open(server.aof_filename, O_WRONLY | O_APPEND | O_CREAT, 0644);
         if (server.aof_fd == -1)
         {
-            serverLog(LL_WARNING, "Can't open the append-only file: %s",
-                      strerror(errno));
+            serverLog(LL_WARNING, "Can't open the append-only file: %s", strerror(errno));
             exit(1);
         }
     }
@@ -3254,6 +3263,7 @@ void initServer(void)
      * no explicit limit in the user provided configuration we set a limit
      * at 3 GB using maxmemory with 'noeviction' policy'. This avoids
      * useless crashes of the Redis instance for out of memory. */
+    // 设置 redis 的内存阈值，当超过该阈值时，需要执行淘汰，淘汰策略由 server.maxmemory_policy 指定
     if (server.arch_bits == 32 && server.maxmemory == 0)
     {
         serverLog(LL_WARNING, "Warning: 32 bit instance detected but no memory limit set. Setting 3 GB maxmemory limit with 'noeviction' policy now.");
@@ -3276,8 +3286,8 @@ void initServer(void)
  * see: https://sourceware.org/bugzilla/show_bug.cgi?id=19329 */
 void InitServerLast()
 {
-    bioInit();
-    initThreadedIO();
+    bioInit();      // 启动 BIO 线程
+    initThreadedIO();       // 启动 IO 线程
     set_jemalloc_bg_thread(server.jemalloc_bg_thread);
     server.initial_memory_usage = zmalloc_used_memory();
 }
@@ -3385,7 +3395,7 @@ int populateCommandTableParseFlags(struct redisCommand *c, char *strflags)
 /* Populates the Redis Command Table starting from the hard coded list
  * we have on top of server.c file.
  *
- * 将 redisCommandTable 中的命令信息插入到 redisServer.commands 哈希表中
+ * 将 redisCommandTable 中的命令信息插入到 redisServer.commands 和 redisServer.orig_commands 中
  */
 void populateCommandTable(void)
 {
@@ -5926,7 +5936,7 @@ int main(int argc, char **argv)
     dictSetHashFunctionSeed(hashseed);
     // 判断是否以哨兵模式启动: 一般是以 redis-sentinel, redis-server --sentinel 两种方式启动哨兵模式
     server.sentinel_mode = checkForSentinelMode(argc, argv);
-    initServerConfig();
+    initServerConfig();     // 初始化服务器配置, 主要是初始化 redisServer 结构体
     ACLInit(); /* The ACL subsystem must be initialized ASAP because the
                   basic networking code and client creation depends on it. */
     moduleInitModulesSystem();
@@ -5945,8 +5955,8 @@ int main(int argc, char **argv)
      * data structures with master nodes to monitor. */
     if (server.sentinel_mode)
     {
-        initSentinelConfig();       // 初始化节点默认配置
-        initSentinel();             // 初始化节点状态
+        initSentinelConfig();
+        initSentinel();
     }
 
     /* Check if we need to start in redis-check-rdb/aof mode. We just execute
@@ -6062,7 +6072,7 @@ int main(int argc, char **argv)
     }
 
     readOOMScoreAdj();
-    initServer();
+    initServer();       // 初始化 redis
     if (background || server.pidfile)
         createPidFile();
     redisSetProcTitle(argv[0]);
@@ -6096,8 +6106,9 @@ int main(int argc, char **argv)
 #endif /* __linux__ */
         moduleLoadFromQueue();
         ACLLoadUsersAtStartup();
-        InitServerLast();
-        loadDataFromDisk();
+        InitServerLast();      // 启动后台 BIO 线程，并且对多线程进行处理
+        loadDataFromDisk();     // 从磁盘上加载 AOF 或者 RDB 文件
+
         if (server.cluster_enabled)
         {
             if (verifyClusterConfigWithData() == C_ERR)
@@ -6108,6 +6119,7 @@ int main(int argc, char **argv)
                 exit(1);
             }
         }
+
         if (server.ipfd_count > 0 || server.tlsfd_count > 0)
             serverLog(LL_NOTICE, "Ready to accept connections");
         if (server.sofd > 0)
@@ -6142,10 +6154,10 @@ int main(int argc, char **argv)
         serverLog(LL_WARNING, "WARNING: You specified a maxmemory value that is less than 1MB (current value is %llu bytes). Are you sure this is what you really want?", server.maxmemory);
     }
 
-    redisSetCpuAffinity(server.server_cpulist);
+    redisSetCpuAffinity(server.server_cpulist);     // 绑定 cpu 核
     setOOMScoreAdj(-1);
 
-    aeMain(server.el);
+    aeMain(server.el);      // 启动事件循环
     aeDeleteEventLoop(server.el);
     return 0;
 }

@@ -179,7 +179,7 @@ void *bioProcessBackgroundJobs(void *arg)
         break;
     }
 
-    redisSetCpuAffinity(server.bio_cpulist);
+    redisSetCpuAffinity(server.bio_cpulist);        // 将该新线程绑定到特定 CPU 上去执行
 
     // 设置当前线程的取消状态，让这个线程可以随时被主线程取消
     makeThreadKillable();

@@ -109,7 +109,7 @@ void linkClient(client *c)
      * a linear scan, but just a constant time operation. */
     c->client_list_node = listLast(server.clients);
     uint64_t id = htonu64(c->id);
-    raxInsert(server.clients_index, (unsigned char *)&id, sizeof(id), c, NULL);     // 将 client-id 插入到 server 的基数树中
+    raxInsert(server.clients_index, (unsigned char *)&id, sizeof(id), c, NULL); // 将 client-id 插入到 server 的基数树中
 }
 
 int authRequired(client *c)
@@ -133,11 +133,11 @@ client *createClient(connection *conn)
      * contexts (for instance a Lua script) we need a non connected client. */
     if (conn)
     {
-        connNonBlock(conn);     // 设置非阻塞
+        connNonBlock(conn);         // 设置非阻塞
         connEnableTcpNoDelay(conn); // 关闭发包优化算法
         if (server.tcpkeepalive)
-            connKeepAlive(conn, server.tcpkeepalive);   // 设置 keepalive
-        connSetReadHandler(conn, readQueryFromClient);      // 注册 conn socket 的 EPOLLIN 事件，并设置 EPOLLIN 事件的回调函数
+            connKeepAlive(conn, server.tcpkeepalive);  // 设置 keepalive
+        connSetReadHandler(conn, readQueryFromClient); // 注册 conn socket 的 EPOLLIN 事件，并设置 EPOLLIN 事件的回调函数
         connSetPrivateData(conn, c);
     }
 
@@ -208,7 +208,7 @@ client *createClient(connection *conn)
     listSetFreeMethod(c->pubsub_patterns, decrRefCountVoid);
     listSetMatchMethod(c->pubsub_patterns, listMatchObjects);
     if (conn)
-        linkClient(c);     // 将 client 添加到 redisServer.clients 中
+        linkClient(c); // 将 client 添加到 redisServer.clients 中
     initClientMultiState(c);
     return c;
 }
@@ -1243,9 +1243,10 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask)
                           "Accepting client connection: %s", server.neterr);
             return;
         }
+
         serverLog(LL_VERBOSE, "Accepted %s:%d", cip, cport);
-        // 调用 connCreateAcceptedSocket() 接口创建 struct connection 结构体，用来管理连接
-        // acceptCommonHandler() 中为新到的连接创建一个 client 结构，并设置 conn_fd 的 EPOLLIN 事件回调函数
+        // connCreateAcceptedSocket: 创建 struct connection, 管理连接
+        // acceptCommonHandler: 为该连接创建一个 client, 然后将连接 socket 加入到内核监听队列，并设置 conn_fd 的 EPOLLIN 事件回调函数
         acceptCommonHandler(connCreateAcceptedSocket(cfd), 0, cip);
     }
 }
@@ -1560,7 +1561,7 @@ void freeClientAsync(client *c)
     }
     static pthread_mutex_t async_free_queue_mutex = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_lock(&async_free_queue_mutex);
-    listAddNodeTail(server.clients_to_close, c);        // 将 client 插入到列表中
+    listAddNodeTail(server.clients_to_close, c); // 将 client 插入到列表中
     pthread_mutex_unlock(&async_free_queue_mutex);
 }
 
@@ -1724,7 +1725,7 @@ int writeToClient(client *c, int handler_installed)
         /* Close connection after entire reply has been sent. */
         if (c->flags & CLIENT_CLOSE_AFTER_REPLY)
         {
-            freeClientAsync(c);     // 异步释放 client
+            freeClientAsync(c); // 异步释放 client
             return C_ERR;
         }
     }
@@ -1769,7 +1770,7 @@ int handleClientsWithPendingWrites(void)
             continue;
 
         /* Try to write buffers to the client socket. */
-        if (writeToClient(c, 0) == C_ERR)   // 将输出缓冲区的数据通过 socket 发送出去
+        if (writeToClient(c, 0) == C_ERR) // 将输出缓冲区的数据通过 socket 发送出去
             continue;
 
         /* If after the synchronous writes above we still have data to
@@ -2232,7 +2233,7 @@ int processCommandAndResetClient(client *c)
     server.current_client = c;
     if (processCommand(c) == C_OK) // 执行命令
     {
-        commandProcessed(c);    // 命令执行成功，尝试重置 client
+        commandProcessed(c); // 命令执行成功，尝试重置 client
     }
     if (server.current_client == NULL)
         deadclient = 1;
@@ -2266,7 +2267,7 @@ int processPendingCommandsAndResetClient(client *c)
 void processInputBuffer(client *c)
 {
     /* Keep processing while there is something in the input buffer */
-    while (c->qb_pos < sdslen(c->querybuf))     // 循环解析 client->querybuf
+    while (c->qb_pos < sdslen(c->querybuf)) // 循环解析 client->querybuf
     {
         /* Return if clients are paused. */
         if (!(c->flags & CLIENT_SLAVE) &&
@@ -2300,7 +2301,7 @@ void processInputBuffer(client *c)
             break;
 
         /* Determine request type when unknown. */
-        if (!c->reqtype)    // 判断命令类型
+        if (!c->reqtype) // 判断命令类型
         {
             if (c->querybuf[c->qb_pos] == '*')
             {
@@ -2362,7 +2363,7 @@ void processInputBuffer(client *c)
             }
 
             /* We are finally ready to execute the command. */
-            if (processCommandAndResetClient(c) == C_ERR)   // 尝试执行上面解析出来的命令并尝试重置 client
+            if (processCommandAndResetClient(c) == C_ERR) // 尝试执行上面解析出来的命令并尝试重置 client
             {
                 /* If the client is no longer valid, we avoid exiting this
                  * loop and trimming the client buffer later. So we return
@@ -2389,7 +2390,7 @@ void readQueryFromClient(connection *conn)
 
     /* Check if we want to read from the client later when exiting from
      * the event loop. This is the case if threaded I/O is enabled. */
-    if (postponeClientRead(c))     // 多线程处理: 将 client 添加到等待队列中, 在下一次进入循环之前执行 befoeresleep 中执行读取操作
+    if (postponeClientRead(c)) // 多线程处理: 将 client 添加到等待队列中, 在下一次进入循环之前执行 beforesleep 中执行读取操作
         return;
 
     /* Update total number of reads on server */
@@ -2467,7 +2468,7 @@ void readQueryFromClient(connection *conn)
 
     /* There is more data in the client input buffer, continue parsing it
      * in case to check if there is a full command to execute. */
-    processInputBuffer(c);      // 尝试解析 client->querybuf 中的命令
+    processInputBuffer(c); // 尝试解析 client->querybuf 中的命令
 }
 
 void getClientsMaxBuffers(unsigned long *longest_output_list,
@@ -3653,9 +3654,9 @@ int tio_debug = 0;
 #define IO_THREADS_OP_READ 0
 #define IO_THREADS_OP_WRITE 1
 
-pthread_t io_threads[IO_THREADS_MAX_NUM];                           // 记录 IO 线程的线程 ID, 0 号索引为主线程的线程 ID
+pthread_t io_threads[IO_THREADS_MAX_NUM]; // 记录 IO 线程的线程 ID, 0 号索引为主线程的线程 ID
 pthread_mutex_t io_threads_mutex[IO_THREADS_MAX_NUM];
-_Atomic unsigned long io_threads_pending[IO_THREADS_MAX_NUM];       // 每个 IO 线程负责处理的 client 数量
+_Atomic unsigned long io_threads_pending[IO_THREADS_MAX_NUM]; // 每个 IO 线程负责处理的 client 数量
 
 // 由于所有的 IO 线程同一时间只能执行同一类工作，这个变量用于记录当前 IO 线程处理的工作类型: IO_THREADS_OP_READ/IO_THREADS_OP_WRITE
 int io_threads_op; /* IO_THREADS_OP_WRITE or IO_THREADS_OP_READ. */
@@ -3663,7 +3664,7 @@ int io_threads_op; /* IO_THREADS_OP_WRITE or IO_THREADS_OP_READ. */
 /* This is the list of clients each thread will serve when threaded I/O is
  * used. We spawn io_threads_num-1 threads, since one is the main thread
  * itself. */
-list *io_threads_list[IO_THREADS_MAX_NUM];  // 每个 IO 线程处理的 client 列表
+list *io_threads_list[IO_THREADS_MAX_NUM]; // 每个 IO 线程处理的 client 列表
 
 void *IOThreadMain(void *myid)
 {
@@ -4019,17 +4020,17 @@ int handleClientsWithPendingReadsUsingThreads(void)
     for (int j = 1; j < server.io_threads_num; j++)
     {
         int count = listLength(io_threads_list[j]);
-        io_threads_pending[j] = count;  // 设置各个线程队列中挂起的客户端数量
+        io_threads_pending[j] = count; // 设置各个线程队列中挂起的客户端数量
     }
 
     // 至此，各个 IO 线程开始处理 client 的读取操作
 
     /* Also use the main thread to process a slice of clients. */
-    listRewind(io_threads_list[0], &li);    // 主线程开始处理分配给自己的那部分 client
+    listRewind(io_threads_list[0], &li); // 主线程开始处理分配给自己的那部分 client
     while ((ln = listNext(&li)))
     {
         client *c = listNodeValue(ln);
-        readQueryFromClient(c->conn);   // 从 client 的连接 socket 中读取数据
+        readQueryFromClient(c->conn); // 从 client 的连接 socket 中读取数据
     }
     listEmpty(io_threads_list[0]);
 

@@ -32,12 +32,18 @@
 
 typedef struct aeApiState
 {
-    int epfd;
-    struct epoll_event *events;
+    int epfd;                   // 保存 epoll-fd
+    struct epoll_event *events; // 在 aeApiCreate 中分配内存，用于在 epoll_wait 中获取已经触发的事件, epoll_event.data.fd 中保存了触发事件的文件描述符
 } aeApiState;
 
 static int aeApiCreate(aeEventLoop *eventLoop)
 {
+    // 如果将 aeApiState 修改为柔性数组，则可以使用下面的内存分配方式:
+    // aeApiState *state = (aeApiState *)zmalloc(sizeof(aeApiState) + sizeof(epoll_event) * eventLoop->setsize);
+    // if (!state)
+    //     return -1;
+    // state->events =  (struct epoll_event *)(state + sizeof(aeApiState));
+
     aeApiState *state = zmalloc(sizeof(aeApiState));
     if (!state)
         return -1;
@@ -149,6 +155,7 @@ static int aeApiPoll(aeEventLoop *eventLoop, struct timeval *tvp)
                 mask |= AE_WRITABLE | AE_READABLE;
             if (e->events & EPOLLHUP)
                 mask |= AE_WRITABLE | AE_READABLE;
+
             eventLoop->fired[j].fd = e->data.fd; // 将触发的事件的描述符放到 fired 中, 由外部对这些触发事件进行处理
             eventLoop->fired[j].mask = mask;
         }

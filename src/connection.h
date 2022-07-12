@@ -76,7 +76,7 @@ struct connection {
     short int flags;
     short int refs;
     int last_errno;
-    void *private_data;
+    void *private_data;     // 指向 client
     ConnectionCallbackFunc conn_handler;
     ConnectionCallbackFunc write_handler;
     ConnectionCallbackFunc read_handler;
@@ -141,7 +141,7 @@ static inline int connWrite(connection *conn, const void *data, size_t data_len)
 }
 
 /* Read from the connection, behaves the same as read(2).
- * 
+ *
  * Like read(2), a short read is possible.  A return value of 0 will indicate the
  * connection was closed, and -1 will indicate an error.
  *
@@ -163,7 +163,7 @@ static inline int connSetWriteHandler(connection *conn, ConnectionCallbackFunc f
  * If NULL, the existing handler is removed.
  */
 static inline int connSetReadHandler(connection *conn, ConnectionCallbackFunc func) {
-    return conn->type->set_read_handler(conn, func);
+    return conn->type->set_read_handler(conn, func);        // set_read_handler 回调函数是在创建 connection 的时候初始化的
 }
 
 /* Set a write handler, and possibly enable a write barrier, this flag is

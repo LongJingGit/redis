@@ -172,6 +172,7 @@ int aeCreateFileEvent(aeEventLoop *eventLoop, int fd, int mask,
         errno = ERANGE;
         return AE_ERR;
     }
+
     aeFileEvent *fe = &eventLoop->events[fd];
 
     if (aeApiAddEvent(eventLoop, fd, mask) == -1)
@@ -332,7 +333,7 @@ static int processTimeEvents(aeEventLoop *eventLoop)
      * indefinitely, and practice suggests it is.
      *
      * 如果系统的时钟被移动到未来，那么在再次处理时间事件之前，需要尝试对时钟进行修正。同时当这种情况发生时,
-     * redis 会通过将 te->when_sec 置为 0 的方式来强制提前处理队列中的时间事件。因为 redis 的作者认为,
+     * redis 会通过将 te->when_sec 置为 0 的方式来强制提前处理队列中的时间事件。因为 redis 认为,
      * 当系统时间出现错位时, 提前处理时间事件比延后处理这些事件更加安全。
      */
     if (now < eventLoop->lastTime)
@@ -366,12 +367,15 @@ static int processTimeEvents(aeEventLoop *eventLoop)
                 te = next;
                 continue;
             }
+
             if (te->prev)
                 te->prev->next = te->next;
             else
                 eventLoop->timeEventHead = te->next;
+
             if (te->next)
                 te->next->prev = te->prev;
+
             if (te->finalizerProc)
                 te->finalizerProc(eventLoop, te->clientData);
             zfree(te);
@@ -389,7 +393,9 @@ static int processTimeEvents(aeEventLoop *eventLoop)
             te = te->next;
             continue;
         }
+
         aeGetTime(&now_sec, &now_ms);
+
         if (now_sec > te->when_sec ||
             (now_sec == te->when_sec && now_ms >= te->when_ms))
         {
@@ -409,6 +415,7 @@ static int processTimeEvents(aeEventLoop *eventLoop)
                 te->id = AE_DELETED_EVENT_ID;   // 对于单次执行的事件，将事件 id 设置为 -1, 在下一次事件循环中从列表中删除该事件
             }
         }
+
         te = te->next;
     }
     return processed;
@@ -503,7 +510,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 
         /* Call the multiplexing API, will return only on timeout or when
          * some event fires. */
-        numevents = aeApiPoll(eventLoop, tvp);
+        numevents = aeApiPoll(eventLoop, tvp);          // 调用 epoll_wait, 监听事件
 
         /* After sleep callback. */
         // 退出循环之前执行 aftersleep
