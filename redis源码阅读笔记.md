@@ -340,7 +340,7 @@ Hot key 引发缓存系统异常，主要是因为突发热门事件发生时，
 
 #### 业务场景
 
-大 key 的业务场景也比较常见。比如互联网系统中需要保存用户最新 1万 个粉丝的业务，比如一个用户个人信息缓存，包括基本资料、关系图谱计数、发 feed 统计等。微博的 feed 内容缓存也很容易出现，一般用户微博在 140 字以内，但很多用户也会发表 1千 字甚至更长的微博内容，这些长微博也就成了大 key。
+大 key 的业务场景也比较常见。比如互联网系统中需要保存用户最新 1万 个粉丝的业务，比如一个用户个人信息缓存，包括基本资料、关系图谱计数、发 feed 统计等。微博的 feed 内容缓存也很容易出现，一般用户微博在 140 字以内，但很多用户也会发表 1千字甚至更长的微博内容，这些长微博也就成了大 key。
 
 #### 解决方案
 
@@ -533,7 +533,7 @@ Redis作者在架构设计中对系统的扩展也倾注了大量关注。在主
 
 通过主从复制可以较好的解决 Redis 的单机读写问题，但所有写操作都集中在 master 服务器，很容易达到 Redis 的写上限，同时 Redis 的主从节点都保存了业务的所有数据，随着业务发展，很容易出现内存不够用的问题。
 
-为此，Redis 分区无法避免。虽然业界大多采用在 client 和 proxy 端分区，但 Redis 自己也早早推出了 cluster 功能，并不断进行优化。Redis cluster 预先设定了 16384 个 slot 槽，在 Redis 集群启动时，通过手动或自动将这些 slot 分配到不同服务节点上。在进行 key 读写定位时，首先对 key 做 hash，并将 hash 值对 16383 ，做 按位与运算，确认 slot，然后确认服务节点，最后再对 对应的 Redis 节点，进行常规读写。如果 client 发送到错误的 Redis 分片，Redis 会发送重定向回复。如果业务数据大量增加，Redis 集群可以通过数据迁移，来进行在线扩容。
+为此，Redis 分区无法避免。虽然业界大多采用在 client 和 proxy 端分区，但 Redis 自己也早早推出了 cluster 功能，并不断进行优化。Redis cluster 预先设定了 16384 个 slot 槽，在 Redis 集群启动时，通过手动或自动将这些 slot 分配到不同服务节点上。在进行 key 读写定位时，首先对 key 做 hash，并将 hash 值对 16383 做按位与运算，确认 slot，然后确认服务节点，最后再对对应的 Redis 节点进行常规读写。如果 client 发送到错误的 Redis 分片，Redis 会发送重定向回复。如果业务数据大量增加，Redis 集群可以通过数据迁移，来进行在线扩容。
 
 ## Redis 事件驱动模型
 
@@ -828,7 +828,7 @@ redisObject 定义了基础的 Redis 对象类型，这个数据结构基本上�
 
 ![类图](images/redis内部数据结构-dict.png)
 
-Redis 中的 dict，类似于 Memcached 中 hashtable。都可以用于 key 或元素的快速插入、更新和定位。dict 字典中，有一个长度为 2 的哈希表数组，日常访问用 0 号哈希表，如果 0 号哈希表元素过多，则分配一个 2 倍 0 号哈希表大小的空间给 1 号哈希表，然后进行逐步迁移，rehashidx 这个字段就是专门用来做标志迁移位置的。在哈希表操作中，采用单向链表来解决 hash 冲突问题。dict 中还有一个重要字段是 type，它用于保存 hash 函数及 key/value 赋值、比较函数。
+Redis 中的 dict，类似于 Memcached 中 hashtable, 都可以用于 key 或元素的快速插入、更新和定位。dict 字典中，有一个长度为 2 的哈希表数组，日常访问用 0 号哈希表，如果 0 号哈希表元素过多，则分配一个 2 倍 0 号哈希表大小的空间给 1 号哈希表，然后进行逐步迁移，rehashidx 这个字段就是专门用来做标志迁移位置的。在哈希表操作中，采用单向链表来解决 hash 冲突问题。dict 中还有一个重要字段是 type，它用于保存 hash 函数及 key/value 赋值、比较函数。
 
 dictht 中的 table 是一个 hash 表数组，每个桶指向一个 dictEntry 结构。dictht 采用 dictEntry 的单向链表来解决 hash 冲突问题。
 
@@ -973,29 +973,25 @@ redis 中不再使用
 
 当 key 过期后，或者 Redis 实际占用的内存超过阀值后，Redis 就会对 key 进行淘汰，删除过期的或者不活跃的 key，回收其内存，供新的 key 使用。Redis 的内存阀值是通过 redisServer.maxmemory 设置的，而超过内存阀值后的淘汰策略，是通过 redisServer.maxmemory_policy 设置的。
 
-Redis 会在 2 种场景下对 key 进行淘汰，第一种是在定期执行 `serverCron` 时，检查淘汰 key；第二种是在执行命令时，检查淘汰 key。
+Redis 会在 3 种场景下对 key 进行淘汰：
 
-第一种场景，Redis 定期执行 `serverCron` 时，会对 DB 进行检测，清理过期 key。清理流程如下：首先轮询每个 DB，检查其过期字典 expires，从所有带过期时间的 key 中，随机选取 20 个样本 key，检查这些 key 是否过期，如果过期则删除。如果 20 个样本中，超过 5 个 key 都过期，即过期比例大于 25%，就继续从该 DB 的过期字典 expires 中，再随机取样 20 个 key 进行过期清理，持续循环，直到选择的 20 个样本 key 中，过期的 key 数小于等于 5，当前这个 DB 则清理完毕，然后继续轮询下一个 DB。
+1. Redis 定期执行 `serverCron` 时，清理**过期的 key**。清理流程如下：首先轮询每个 DB，检查其过期字典 expires，从所有带过期时间的 key 中，随机选取 20 个样本 key，检查这些 key 是否过期，如果过期则删除。如果 20 个样本中，超过 5 个 key 都过期，即过期比例大于 25%，就继续从该 DB 的过期字典 expires 中，再随机取样 20 个 key 进行过期清理，持续循环，直到选择的 20 个样本 key 中，过期的 key 数小于等于 5，当前这个 DB 则清理完毕，然后继续轮询下一个 DB。在执行 serverCron 时，如果在某个 DB 中，过期字典 expires 的填充率低于 1%，则放弃对该 DB 的取样检查，因为效率太低。如果 DB 的过期字典 expires 中，过期 key 太多，一直持续循环回收，会占用大量主线程时间，所以 Redis 还设置了一个过期时间。这个过期时间根据 serverCron 的执行频率来计算，5.0 版本及之前采用慢循环过期策略，默认是 25ms，如果回收超过 25ms 则停止，6.0 非稳定版本采用快循环策略，过期时间为 1ms。
 
-在执行 serverCron 时，如果在某个 DB 中，过期字典 expires 的填充率低于 1%，则放弃对该 DB 的取样检查，因为效率太低。如果 DB 的过期字典 expires 中，过期 key 太多，一直持续循环回收，会占用大量主线程时间，所以 Redis 还设置了一个过期时间。这个过期时间根据 serverCron 的执行频率来计算，5.0 版本及之前采用慢循环过期策略，默认是 25ms，如果回收超过 25ms 则停止，6.0 非稳定版本采用快循环策略，过期时间为 1ms。
+   **NOTE**: 6.0 稳定版以及后续版本对于清理流程的细节做了改动，比如可通过参数指定使用快循环过期策略还是慢循环过期策略。代码细节参考: expire.c:activeExpireCycle()
 
-**NOTE**: 6.0 稳定版以及后续版本对于清理流程的细节做了改动，比如可通过参数指定使用快循环过期策略还是慢循环过期策略。代码细节参见: expire.c:activeExpireCycle()
+2. Redis 每次在访问 key 的时候，会先判断该 key 是否过期，如果过期，则会从主字典 dict 和过期字典 expires 中删除该 key。代码细节参考: db.c:expireIfNeeded()
 
-> Redis 每次在访问 key 的时候，会先判断该 key 是否过期，如果过期，则会从主字典 dict 和过期字典 expires 中删除该 key。
+3. Redis 在执行命令请求时，会检查当前内存占用是否超过 maxmemory 的数值，如果超过，则按照设置的淘汰策略，淘汰**不活跃的 key**。代码细节参考: processCommand()-->freeMemoryIfNeededAndSafe()-->freeMemoryIfNeeded()。
 
-第二种场景，Redis 在执行命令请求时，会检查当前内存占用是否超过 maxmemory 的数值，如果超过，则按照设置的淘汰策略，淘汰不活跃的 key。代码细节参见: evict.c。
-
-注意对比两种场景：第一种场景是清理过期的 key；第二种场景是在内存超过了限值之后，清理不活跃的 key（key 未过期）。
+注意对比这三种场景：前两种场景是清理过期的 key；第三种场景是在内存超过了限值之后，清理不活跃的 key（key 未过期）。第三种场景主要用在 redis 做缓存的场景，当内存不足时，将某些认为未来不会被访问到的数据从键空间删除。
 
 ### 淘汰方式
 
-Redis 中 key 的淘汰方式有两种，分别是同步删除淘汰和异步删除淘汰。在 `serverCron` 定期清理过期 key 时，如果设置了延迟过期配置 `lazyfree-lazy-expire`，会检查 key 对应的 value 是否为多元素的复合类型（即是否为 list 列表、set 集合、zset 有序集合和 hash 中的一种），并且 value 中存储的的元素数量是否大于 64，则在把 key 从 DB 的过期字典 expires 和主字典 dict 中删除后，将 value 递交给 BIO 任务队列，由 BIO 延迟删除线程异步回收；否则，直接从 DB 的过期字典 expires 和主字典 dict 中删除，并回收 key、value 所占用的空间。在执行命令时，如果设置了 `lazyfree-lazy-eviction`，在淘汰 key 时，也采用前面类似的检测方法，对于元素数大于 64 的 4 种复合类型，使用 BIO 线程异步删除，否则采用同步直接删除。
+Redis 中 key 的淘汰方式有两种，分别是同步删除淘汰和异步删除淘汰。在 `serverCron` 定期清理过期 key 时，如果设置了延迟过期 `lazyfree-lazy-expire`，会检查 key 对应的 value 是否为多元素的复合类型（即是否为 list 列表、set 集合、zset 有序集合和 hash 中的一种），并且 value 中存储的的元素数量是否大于 64，则在把 key 从 DB 的过期字典 expires 和主字典 dict 中删除后，将 value 递交给 BIO 任务队列，由 BIO 延迟删除线程异步回收；否则，直接从 DB 的过期字典 expires 和主字典 dict 中删除，并回收 key、value 所占用的空间。在执行命令时，如果设置了 `lazyfree-lazy-eviction`，在淘汰 key 时，也采用前面类似的检测方法，对于元素数大于 64 的 4 种复合类型，使用 BIO 线程异步删除，否则采用同步直接删除。
 
 ### 淘汰策略
 
-Redis 提供了 8 种淘汰策略对 key 进行管理，而且还引入基于样本的 eviction pool，来提升剔除的准确性，确保在保持最大性能的前提下，剔除最不活跃的 key。eviction pool 主要对 LRU、LFU，以及过期字典 ttl 内存管理策略生效。处理流程为：
-
-当 Redis 内存占用超过阀值后，按策略从主字典 dict 或者过期字典 expires 中随机选择 N 个 key，N 默认是 5，计算每个 key 的 idle 值，按 idle 值从小到大的顺序插入 evictionPool 中，然后选择 idle 最大的那个 key，进行淘汰。
+Redis 提供了 8 种淘汰策略对不活跃的 key 进行管理，而且还引入基于样本的 eviction pool，来提升剔除的准确性，确保在保持最大性能的前提下，剔除最不活跃的 key。eviction pool 主要对 LRU、LFU，以及过期字典 ttl 内存管理策略生效。处理流程为：当 Redis 内存占用超过阀值后，按策略从主字典 dict 或者过期字典 expires 中随机选择 N 个 key，N 默认是 5，计算每个 key 的 idle 值，按 idle 值从小到大的顺序插入 evictionPool 中，然后选择 idle 最大的那个 key，进行淘汰。
 
 ![类图](images/redis淘汰策略-1.png)
 
@@ -1097,7 +1093,7 @@ AOF 的 rewrite 操作可以通过运维执行 bgrewriteaof 命令来进行，�
 
 当对 AOF 进行 rewrite 时，首先会 fork 一个子进程。子进程轮询所有 RedisDB 快照，将所有内存数据转为 cmd，并写入临时文件。在子进程 rewriteaof 时，主进程可以继续执行用户请求，执行完毕后将写指令写入旧的 AOF 文件和 rewrite 缓冲。子进程将 RedisDB 中数据落地完毕后，通知主进程。主进程从而将 AOF rewrite 缓冲数据写入 AOF 临时文件，然后用新的 AOF 文件替换旧的 AOF 文件，最后通过 BIO 线程异步关闭旧的 AOF 文件。至此，AOF 的 rewrite 过程就全部完成了。
 
-AOF 重写的过程，是一个轮询全部 RedisDB 快照逐一落地的过程。每个 DB，首先通过 `select $db` 来记录待落地的 DBID。然后通过命令记录每个 key/value。对于数据类型为 SDS 的 value，可以直接落地。但如果 value 是聚合类型，则会将所有元素设为批量添加指令，进行落地。
+AOF 重写的过程，是一个轮询全部 RedisDB 快照逐一落地的过程。每个 DB 首先通过 `select $db` 来记录待落地的 DBID。然后通过命令记录每个 key/value。对于数据类型为 SDS 的 value，可以直接落地。但如果 value 是聚合类型，则会将所有元素设为批量添加指令，进行落地。
 
 对于 list 列表类型，通过 RPUSH 指令落地所有列表元素。对于 set 集合，会用 SADD 落地所有集合元素。对于 Zset 有序集合，会用 Zadd 落地所有元素，而对于 Hash 会用 Hmset 落地所有哈希元素。如果数据带过期时间，还会通过 pexpireat 来记录数据的过期时间。
 
@@ -1404,6 +1400,16 @@ slot 迁移过程中，对节点里的 key 处理方式如下：
 ## Redis 分布式锁
 
 
+
+## 遗留问题
+
+1. 分布式锁的实现
+2. ACL 是什么
+3. TLS 是什么
+   1. redis 通道加密传输
+4. moduleySystem 怎么使用
+5. redis 中是如何解决《缓冲设计的七个经典问题》的
+6. redis 主从复制中，slave 闪断重连后是如何实现增量复制的
 
 ## 源码编译安装
 
