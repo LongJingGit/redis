@@ -85,7 +85,7 @@ unsigned int getLRUClock(void)
  *
  * server.lruclock 是在系统的心跳 serverCron 中更新的.
  * 1. 正常情况下，LRU 跳数的频率 LRU_CLOCK_RESOLUTION 为 1000ms/1次，而系统心跳则是 1000ms/10次，系统心跳的频率远高于 LRU 频率, 所有可以通过读取
- * server.lrulock 来获取当前的 LRU 时间戳
+ * server.lruclock 来获取当前的 LRU 时间戳
  * 2. 如果系统心跳频率低于 LRU 频率时，redisServer.lruclock 缓存无法及时更新，对于这种情况，通过 getLRUClock 函数来获取时间戳跳数。
  */
 unsigned int LRU_CLOCK(void)
@@ -251,6 +251,7 @@ void evictionPoolPopulate(int dbid, dict *sampledict, dict *keydict, struct evic
         /* Insert the element inside the pool.
          * First, find the first empty bucket or the first populated
          * bucket that has an idle time smaller than our idle time. */
+        // 淘汰池 pool 中 key 的 idle 是按照从小到大的顺序，所以在这里需要找到合适的位置将 idle 插入 pool
         k = 0;
         while (k < EVPOOL_SIZE && pool[k].key && pool[k].idle < idle)
             k++;
@@ -354,6 +355,7 @@ void evictionPoolPopulate(int dbid, dict *sampledict, dict *keydict, struct evic
 /* Return the current time in minutes, just taking the least significant
  * 16 bits. The returned time is suitable to be stored as LDT (last decrement
  * time) for the LFU implementation. */
+// 获取 16 位的当前基于Unix时间戳的分钟时间戳
 unsigned long LFUGetTimeInMinutes(void)
 {
     return (server.unixtime / 60) & 65535;
@@ -363,6 +365,7 @@ unsigned long LFUGetTimeInMinutes(void)
  * that elapsed since the last access. Handle overflow (ldt greater than
  * the current 16 bits minutes time) considering the time as wrapping
  * exactly once. */
+// 计算对象上次访问的时间距今的空闲时间
 unsigned long LFUTimeElapsed(unsigned long ldt)
 {
     unsigned long now = LFUGetTimeInMinutes();

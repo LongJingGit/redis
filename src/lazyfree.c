@@ -188,7 +188,7 @@ void freeSlotsToKeysMapAsync(rax *rt)
  * updating the count of objects to release. */
 void lazyfreeFreeObjectFromBioThread(robj *o)
 {
-    decrRefCount(o);
+    decrRefCount(o);        // 如果对象的引用计数为 1, 则调用释放函数释放该对象
     atomicDecr(lazyfree_objects, 1);
 }
 

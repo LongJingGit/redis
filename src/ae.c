@@ -348,8 +348,9 @@ static int processTimeEvents(aeEventLoop *eventLoop)
 
     eventLoop->lastTime = now;
 
-    te = eventLoop->timeEventHead;
+    te = eventLoop->timeEventHead;      // 获取 eventLoop 上 timeEvent 的双向链表
     maxId = eventLoop->timeEventNextId - 1;
+    // 遍历所有的 timeEvent, 对比事件的执行时间和当前时间，如果时间事件到期，则执行时间事件的回调函数
     while (te)
     {
         long now_sec, now_ms;
@@ -412,7 +413,7 @@ static int processTimeEvents(aeEventLoop *eventLoop)
             }
             else
             {
-                te->id = AE_DELETED_EVENT_ID;   // 对于单次执行的事件，将事件 id 设置为 -1, 在下一次事件循环中从列表中删除该事件
+                te->id = AE_DELETED_EVENT_ID;   // 对于单次执行的事件，将事件 id 设置为 -1, 在下一次事件循环中从链表中删除该事件
             }
         }
 

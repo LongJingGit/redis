@@ -3050,9 +3050,14 @@ void initServer(void)
 
     signal(SIGHUP, SIG_IGN);
     /**
-     * 当 server close 了一个连接之后，若 client 继续发送数据，会收到一个 RST 响应，client 再往 server 发送数据时，
-     * 系统会发送一个 SIGPIPE 信号给 client 进程，告诉 client 该连接已经断开了，不能再写入了。
-     * SIGPIPE 信号的默认处理动作是 terminate(终止,退出), 如果 client 不想退出，可以在 client 端将 SIGPIPE 设置为 SIG_IGN, 忽略信号
+     * SIGPIPE 产生的原因：如果一个 socket 收到了 RST packet 之后，程序仍然向这个 socket 写入数据，就会产生 SIGPIPE 信号。
+     *
+     * 譬如：client 连接到 server 之后，server 向 client 发送多条数据。如果 client 意外奔溃或者主动 close 了连接，server 发送数据时会收到 RST 响应.
+     * server 收到 RST 响应之后继续向 client 发送消息，系统会发送一个 SIGPIPE 信号给 server 进程。
+     *
+     * SIGPIPE 信号的默认处理动作是 terminate(终止,退出), 如果程序不想退出，可以将 SIGPIPE 设置为 SIG_IGN, 忽略信号
+     *
+     * 参考链接：http://senlinzhan.github.io/2017/03/02/sigpipe/
      */
     signal(SIGPIPE, SIG_IGN);
     setupSignalHandlers();
@@ -3200,7 +3205,7 @@ void initServer(void)
     /* Create the timer callback, this is our way to process many background
      * operations incrementally, like clients timeout, eviction of unaccessed
      * expired keys and so forth. */
-    if (aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR)   // 向事件循环中注册时间事件回调函数 serverCron
+    if (aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR)   // timeEvent 回调函数 serverCron
     {
         serverPanic("Can't create event loop timers.");
         exit(1);
@@ -3245,8 +3250,8 @@ void initServer(void)
 
     /* Register before and after sleep handlers (note this needs to be done
      * before loading persistence since it is used by processEventsWhileBlocked. */
-    aeSetBeforeSleepProc(server.el, beforeSleep);
-    aeSetAfterSleepProc(server.el, afterSleep);
+    aeSetBeforeSleepProc(server.el, beforeSleep);       // 设置进入事件循环前的回调函数
+    aeSetAfterSleepProc(server.el, afterSleep);         // 设置退出事件循环后的回调函数
 
     /* Open the AOF file if needed. */
     if (server.aof_state == AOF_ON)
@@ -3526,12 +3531,14 @@ struct redisCommand *lookupCommandOrOriginal(sds name)
  * However for functions that need to (also) propagate out of the context of a
  * command execution, for example when serving a blocked client, you
  * want to use propagate().
+ *
+ * redis 每次在 call 中执行客户端命令时，都会通过调用该接口将所要执行的命令传递给 AOF 内存缓冲，或者发送给集群中的 slave 实例
  */
 void propagate(struct redisCommand *cmd, int dbid, robj **argv, int argc,
                int flags)
 {
     if (server.aof_state != AOF_OFF && flags & PROPAGATE_AOF)
-        feedAppendOnlyFile(cmd, dbid, argv, argc);
+        feedAppendOnlyFile(cmd, dbid, argv, argc);      // 追加命令到 AOF 的内存缓冲
     if (flags & PROPAGATE_REPL)
         replicationFeedSlaves(server.slaves, dbid, argv, argc);
 }

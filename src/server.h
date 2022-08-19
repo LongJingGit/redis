@@ -667,7 +667,15 @@ typedef struct redisObject
 
     unsigned encoding:4;    // 对象的内部编码方式(OBJ_ENCODING_RAW OBJ_ENCODING_INT 等)
 
-    // 淘汰策略需要使用到的字段
+    /**
+     * 淘汰策略需要使用到的字段:
+     * 1. 如果选择的是 LRU 策略: lru 保存着最后一次访问本对象时的 LRU 时钟（每次访问对象都会更新该时钟）
+     * 2. 如果选择的是 LFU 策略: 24 位的 lru 会被分为两部分, 16bits 的 <last decr time> 和 8bits 的 <LOG_C>
+     *    2.1 <LOG_C> 对应着一个计数器，用于标记对象的访问频数, 该字段不但可以随着对数据的访问而增加，同时也可以随着时间递减。之所以这么做，是为了防止过去一段时间被大量访问的对象无法被淘汰。
+     *    2.2 <last decr time> 存储一个递减时间，是一个由 UNIX 时间戳简化存储的分钟时间戳
+     *
+     * NOTE: 对象创建时，<LOG_C> 计数器被设置为 COUNTER_INIT_VAL, 并非是从 0 开始的，这是为了防止一个新对象立即被 redis 的淘汰机制给删除
+     */
     unsigned lru:LRU_BITS; /* LRU time (relative to global lru_clock) or
                             * LFU data (least significant 8 bits frequency
                             * and most significant 16 bits access time). */
@@ -974,7 +982,7 @@ typedef struct client
 
 /**
  * RDB 自动备份的阈值: 在 seconds 秒内累积了 changes 次的数据变化(添加/删除/更新), 自动触发 bgsave 命令, 生成 RDB 文件。
- * redis 中可以保存多个这样的阈值，保存在 redisServer.saveparams 全局数据中。redis 一般会在心跳 serverCron 中，执行检测，多个阈值中只要有一个满足，
+ * redis 中可以保存多个这样的阈值，保存在 redisServer.saveparams 全局数据中。redis 一般会在心跳 serverCron 中执行检测，多个阈值中只要有一个满足，
  * 便会触发 RDB 自动备份
  */
 struct saveparam
@@ -1310,7 +1318,7 @@ struct redisServer
     int verbosity;                  /* Loglevel in redis.conf */
     int maxidletime;                /* Client timeout in seconds */
     int tcpkeepalive;               /* Set SO_KEEPALIVE if non-zero. */
-    int active_expire_enabled;      /* Can be disabled for testing purposes. */
+    int active_expire_enabled;      /* Can be disabled for testing purposes. 主动清理过期键*/
     int active_expire_effort;       /* From 1 (default) to 10, active effort. */
     int active_defrag_enabled;
     int jemalloc_bg_thread;         /* Enable jemalloc background thread */
@@ -1329,23 +1337,23 @@ struct redisServer
     /* AOF persistence */
     int aof_enabled;                /* AOF configuration */
     int aof_state;                  /* AOF_(ON|OFF|WAIT_REWRITE) */
-    int aof_fsync;                  /* Kind of fsync() policy */
+    int aof_fsync;                  /* Kind of fsync() policy. aof 缓冲刷新到磁盘 AOF文件的策略 AOF_FSYNC_(NO/ALWAYS/EVERYSEC)*/
     char *aof_filename;             /* Name of the AOF file */
     int aof_no_fsync_on_rewrite;    /* Don't fsync if a rewrite is in prog. */
     int aof_rewrite_perc;           /* Rewrite AOF if % growth is > M and... */
     off_t aof_rewrite_min_size;     /* the AOF file is at least N bytes. */
     off_t aof_rewrite_base_size;    /* AOF size on latest startup or rewrite. */
-    off_t aof_current_size;         /* AOF current size. */
-    off_t aof_fsync_offset;         /* AOF offset which is already synced to disk. */
+    off_t aof_current_size;         /* AOF current size. AOF 的当前大小*/
+    off_t aof_fsync_offset;         /* AOF offset which is already synced to disk. 通过 write 系统调用写入文件的 AOF 偏移*/
     int aof_flush_sleep;            /* Micros to sleep before flush. (used by tests) */
     int aof_rewrite_scheduled;      /* Rewrite once BGSAVE terminates. */
     pid_t aof_child_pid;            /* PID if rewriting process */
     list *aof_rewrite_buf_blocks;   /* Hold changes during an AOF rewrite. */
-    sds aof_buf;      /* AOF buffer, written before entering the event loop */
-    int aof_fd;       /* File descriptor of currently selected AOF file */
+    sds aof_buf; /* AOF buffer, written before entering the event loop. AOF策略的内存缓冲。命令记录先被写入到这个内存缓冲区中，然后再写入到AOF文件*/
+    int aof_fd;       /* File descriptor of currently selected AOF file. AOF 文件描述符*/
     int aof_selected_db; /* Currently selected DB in AOF */
-    time_t aof_flush_postponed_start; /* UNIX time of postponed AOF flush */
-    time_t aof_last_fsync;            /* UNIX time of last fsync() */
+    time_t aof_flush_postponed_start; /* UNIX time of postponed AOF flush. 是否延迟启动 AOF 的写入???*/
+    time_t aof_last_fsync;            /* UNIX time of last fsync() 上一次 AOF 缓冲写入磁盘的时间戳*/
     time_t aof_rewrite_time_last;   /* Time used by last AOF rewrite run. */
     time_t aof_rewrite_time_start;  /* Current AOF rewrite start time. */
     int aof_lastbgrewrite_status;   /* C_OK or C_ERR */
@@ -1367,7 +1375,7 @@ struct redisServer
                                       to child process. */
     sds aof_child_diff;             /* AOF diff accumulator child side. */
     /* RDB persistence */
-    long long dirty;                /* Changes to DB from the last save */
+    long long dirty;                /* Changes to DB from the last save. 自从上次备份以来被修改的数据量 */
     long long dirty_before_bgsave;  /* Used to restore dirty on failed BGSAVE */
     pid_t rdb_child_pid;            /* PID of RDB saving child */
     struct saveparam *saveparams;   /* Save points array for RDB */
@@ -1594,9 +1602,9 @@ struct redisServer
     int lua_always_replicate_commands; /* Default replication type. */
     int lua_oom;          /* OOM detected when script start? */
     // Lazy free. 默认情况下在配置文件中关闭
-    int lazyfree_lazy_eviction;     // 是否在淘汰不活跃的 key 时，使用惰性释放的策略
-    int lazyfree_lazy_expire;       // 是否在过期某个 key 时，使用惰性释放的策略
-    int lazyfree_lazy_server_del;   // 服务器删除某个 key 时，是否使用惰性释放的策略
+    int lazyfree_lazy_eviction;     // 淘汰不活跃的 key 时，使用异步释放的策略
+    int lazyfree_lazy_expire;       // 清理过期的 key 时，使用异步释放的策略
+    int lazyfree_lazy_server_del;   // 服务器删除某个 key 时，是否使用异步释放的策略
     int lazyfree_lazy_user_del;
     /* Latency monitor */
     long long latency_monitor_threshold;

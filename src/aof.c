@@ -372,8 +372,10 @@ ssize_t aofWrite(int fd, const char *buf, size_t len)
  * When this happens we remember that there is some aof buffer to be
  * flushed ASAP, and will try to do that in the serverCron() function.
  *
- * However if force is set to 1 we'll write regardless of the background
- * fsync. */
+ * However if force is set to 1 we'll write regardless of the background fsync.
+ *
+ * 将 server.aof_buf 写入到 AOF 文件
+ */
 #define AOF_WRITE_LOG_ERROR_RATE 30 /* Seconds between errors logging. */
 void flushAppendOnlyFile(int force)
 {
@@ -666,6 +668,8 @@ sds catAppendOnlyExpireAtCommand(sds buf, struct redisCommand *cmd, robj *key, r
     return buf;
 }
 
+// 将一条 redis 命令按照一定格式追加到 server.aof_buf 中.
+// 命令写入的格式为: *参数数量X\r\n$参数1长度\r\n参数1数据\r\n ... \r\n$参数X长度\r\n参数X数据\r\n
 void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int argc)
 {
     sds buf = sdsempty();
@@ -687,6 +691,7 @@ void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int a
         cmd->proc == expireatCommand)
     {
         /* Translate EXPIRE/PEXPIRE/EXPIREAT into PEXPIREAT */
+        // 执行转换的目的: EXPIRE 记录的是相对时间，而该相对时间在 AOF 文件重新加载时是没有意义的，所以需要转换为 PEXPIREAT 命令
         buf = catAppendOnlyExpireAtCommand(buf, cmd, argv[1], argv[2]);
     }
     else if (cmd->proc == setexCommand || cmd->proc == psetexCommand)
@@ -740,7 +745,7 @@ void feedAppendOnlyFile(struct redisCommand *cmd, int dictid, robj **argv, int a
      * of re-entering the event loop, so before the client will get a
      * positive reply about the operation performed. */
     if (server.aof_state == AOF_ON)
-        server.aof_buf = sdscatlen(server.aof_buf, buf, sdslen(buf));
+        server.aof_buf = sdscatlen(server.aof_buf, buf, sdslen(buf));       // 将命令记录追加到 aof_buf 中
 
     /* If a background append only file rewriting is in progress we want to
      * accumulate the differences between the child DB and the current one

@@ -78,7 +78,7 @@ typedef struct dictType
  * implement incremental rehashing, for the old to the new table. */
 typedef struct dictht
 {
-    dictEntry **table;      // table 是一个数组结构，数组的每一个元素都是一个 "桶"，保存着一个 dictEntry 指针
+    dictEntry **table;      // table 是一个数组结构，数组的每一个元素都是一个 dictEntry 的单链表
     unsigned long size;     // table 中桶的数量（table 表示的数组大小）
     unsigned long sizemask; // 桶数量的掩码，大小为 size - 1（用于快速取余，确定 KV 数据落到哪个桶里）
     unsigned long used;     // 该哈希表中，已经保存的 key-value 的数量（每个桶里面都是一个 dictEntry 的单链表，所以 used 可能会超过 size）

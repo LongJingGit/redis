@@ -314,7 +314,7 @@ void activeExpireCycle(int type)
                         de = de->next;
 
                         ttl = dictGetSignedIntegerVal(e) - now;
-                        if (activeExpireCycleTryExpire(db, e, now))
+                        if (activeExpireCycleTryExpire(db, e, now))     // 判断数据是否过期，如果过期则尝试删除
                             expired++;
                         if (ttl > 0)
                         {

@@ -82,13 +82,16 @@ typedef struct aeFileEvent
 typedef struct aeTimeEvent
 {
     long long id; /* time event identifier. */ // 时间事件 ID, 用来标识事件
-    long when_sec; /* seconds */               // 时间事件发生的秒数
-    long when_ms; /* milliseconds */           // 时间事件发生的毫秒数
+    long when_sec; /* seconds */               // 时间事件执行的秒数
+    long when_ms; /* milliseconds */           // 时间事件执行的毫秒数
     aeTimeProc *timeProc;                      // 时间事件到期时的回调函数
     aeEventFinalizerProc *finalizerProc;       // 事件最终被删除时的回调函数
-    void *clientData;                          // 客户端数据
+    void *clientData;                          // timeProc 的参数
+
+    // prev 和 next 两个指针将 timeEvent 在 eventloop 上连接成双向链表
     struct aeTimeEvent *prev;
     struct aeTimeEvent *next;
+
     int refcount; /* refcount to prevent timer events from being
   		   * freed in recursive time event calls. */
 } aeTimeEvent;
@@ -105,11 +108,11 @@ typedef struct aeEventLoop
 {
     int maxfd;   /* highest file descriptor currently registered */
     int setsize; // max number of file descriptors tracked. 事件循环中监听的文件描述符的数量.
-    long long timeEventNextId;
+    long long timeEventNextId;      // eventloop 上所有时间事件的全局唯一 id, 该 id 按照从小到大的顺序进行递增
     time_t lastTime;     // Used to detect system clock skew. 上次处理事件的时间戳, 用于检测时钟偏差
     aeFileEvent *events; // Registered events. 监听的事件. 数组下标是文件描述符 fd, 数组元素是内核监听的该 fd 的事件. 在 aeCreateEventLoop 中分配内存
     aeFiredEvent *fired; // Fired events.   已经触发的事件
-    aeTimeEvent *timeEventHead;
+    aeTimeEvent *timeEventHead;     // eventloop 上所有时间事件组成的链表
     int stop;
     void *apidata;  // This is used for polling API specific data. 指向的是 aeApiState 的地址, 用于在 epoll_wait 中获取已经触发的事件
     aeBeforeSleepProc *beforesleep; // 每次进入事件循环时调用函数的函数指针

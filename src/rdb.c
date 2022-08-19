@@ -1472,7 +1472,7 @@ int rdbSaveRio(rio *rdb, int *error, int rdbflags, rdbSaveInfo *rsi)
     if (server.rdb_checksum)
         rdb->update_cksum = rioGenericUpdateChecksum;
     snprintf(magic, sizeof(magic), "REDIS%04d", RDB_VERSION);
-    if (rdbWriteRaw(rdb, magic, 9) == -1)
+    if (rdbWriteRaw(rdb, magic, 9) == -1)       // 记录 RDB 版本信息
         goto werr;
     if (rdbSaveInfoAuxFields(rdb, rdbflags, rsi) == -1)
         goto werr;
@@ -3201,6 +3201,7 @@ int rdbSaveToSlavesSockets(rdbSaveInfo *rsi)
     return C_OK; /* Unreached. */
 }
 
+// 同步生成 RDB 文件
 void saveCommand(client *c)
 {
     if (server.rdb_child_pid != -1)
@@ -3221,6 +3222,7 @@ void saveCommand(client *c)
 }
 
 /* BGSAVE [SCHEDULE] */
+// 异步生成 RDB 文件
 void bgsaveCommand(client *c)
 {
     int schedule = 0;
