@@ -52,7 +52,7 @@ int checkBlockedClientTimeout(client *c, mstime_t now) {
  * The function gets the current time in milliseconds as argument since
  * it gets called multiple times in a loop, so calling gettimeofday() for
  * each iteration would be costly without any actual gain. */
-// 检查 client 是否超时，如果超时，则尝试释放 client 或者解除 client 的阻塞状态
+// 检查 client 是否超时，如果超时，则尝试释放 client 或者解除 client 的阻塞状态(由 serverCron-->clientCron 在每次心跳中进行检测)
 int clientsCronHandleTimeout(client *c, mstime_t now_ms)
 {
     time_t now = now_ms/1000;

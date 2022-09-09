@@ -190,7 +190,7 @@ void unblockClient(client *c)
     c->flags &= ~CLIENT_BLOCKED;
     c->btype = BLOCKED_NONE;
     removeClientFromTimeoutTable(c);
-    queueClientForReprocessing(c);
+    queueClientForReprocessing(c);      // 去除 client 的 CLIENT_UNBLOCKED 标记, 并将 client 添加到 unblocked_clients 列表中
 }
 
 /* This function gets called when a blocked client timed out in order to
@@ -286,8 +286,9 @@ void serveClientsBlockedOnListKey(robj *o, readyList *rl)
                  * call. */
                 if (dstkey)
                     incrRefCount(dstkey);
-                unblockClient(receiver);
+                unblockClient(receiver);        // 解除阻塞的客户端
 
+                // 执行阻塞的客户端原本需要执行的命令: BRPOP/BLPOP/BRPOPLPUSH
                 if (serveClientBlockedOnList(receiver,
                                              rl->key, dstkey, rl->db, value,
                                              where) == C_ERR)
@@ -544,7 +545,13 @@ void serveClientsBlockedOnKeyByModule(readyList *rl)
  * a different type compared to the current key type) are moved in the
  * other side of the linked list. However as long as the key starts to
  * be used only for a single type, like virtually any Redis application will
- * do, the function is already fair. */
+ * do, the function is already fair.
+ *
+ * 处理正在阻塞的客户端。主要是将被阻塞的客户端从 ready_keys 中删除，取消客户端的 CLIENT_UNBLOCKED 状态, 将客户端添加到 redisServer.unblocked_clients 列表中, 最后执行阻塞的客户端本来需要执行的命令，将结果写入到客户端输出缓存 client->buf 中
+ *
+ * 最后在每次进入事件循环前 beforeSleep 中根据 unblocked_clients 判断是否有需要处理的被解锁的客户端, 然后调用 processUnblockedClients 处理客户端的后续工作
+ *
+ * 该接口一般在 Redis 执行每一条命令之后在 processCommand 中以及每次进入事件循环之前在 beforeSleep 中进行调用*/
 void handleClientsBlockedOnKeys(void)
 {
     while (listLength(server.ready_keys) != 0)
@@ -734,8 +741,10 @@ void unblockClientWaitingData(client *c)
  * the same key again and again in the list in case of multiple pushes
  * made by a script or in the context of MULTI/EXEC.
  *
- * The list will be finally processed by handleClientsBlockedOnKeys() */
-// 通知 client 等待的 key 已经就绪: 将已就绪的 key 加入到 redisDb.ready_keys 中
+ * The list will be finally processed by handleClientsBlockedOnKeys()
+ *
+ * 检测是否有 client 阻塞在这个 key 上(即检查 blocking_keys 中是否存在这个 key). 如果存在，会将这个 key 添加到 ready_keys 中
+ * Redis 处理完命令之后会检查 ready_keys 是否为空(handleClientsBlockedOnKeys()), 如果不为空，则处理阻塞的客户端*/
 void signalKeyAsReady(redisDb *db, robj *key)
 {
     readyList *rl;

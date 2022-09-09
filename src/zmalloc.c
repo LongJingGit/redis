@@ -98,6 +98,13 @@ static void zmalloc_default_oom(size_t size) {
 
 static void (*zmalloc_oom_handler)(size_t) = zmalloc_default_oom;
 
+/**
+ * Redis 在 malloc 的基础上进行了封装. malloc() 返回的是分配内存的首地址, Redis 使用 malloc_usable_size() 接口获取到每次 malloc 的内存块的可用字节数，然后调用 update_zmalloc_stat_alloc() 接口将每次申请到的内存大小更新到全局变量 used_memory 中，这样其他地方就可以通过 used_memory 变量获取到当前 Redis 使用的总的内存大小. Redis 是对内存敏感的，比如在 Redis 的淘汰机制中，需要对比当前使用内存的总大小和设置的内存阈值，然后决定是否启动淘汰机制
+ *
+ * 释放内存的机制大致一样。
+ *
+ * 需要注意的是, malloc_usable_size() 返回的值可能大于 malloc(size_t size) 中的 size
+ */
 void *zmalloc(size_t size) {
     ASSERT_NO_SIZE_OVERFLOW(size);
     void *ptr = malloc(size+PREFIX_SIZE);
@@ -374,7 +381,7 @@ int zmalloc_get_allocator_info(size_t *allocated,
 }
 
 void set_jemalloc_bg_thread(int enable) {
-    /* let jemalloc do purging asynchronously, required when there's no traffic 
+    /* let jemalloc do purging asynchronously, required when there's no traffic
      * after flushdb */
     char val = !!enable;
     je_mallctl("background_thread", NULL, 0, &val, 1);

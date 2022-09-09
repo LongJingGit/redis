@@ -251,10 +251,11 @@ sds sdsMakeRoomFor(sds s, size_t addlen)
     sh = (char *)s - sdsHdrSize(oldtype);
     reqlen = newlen = (len + addlen);
     assert(newlen > len); /* Catch size_t overflow */
-    if (newlen < SDS_MAX_PREALLOC)
-        newlen *= 2; // 注意：为了避免频繁进行内存分配带来的系统开销，所以这里多分配了一部分缓存
+    // 注意：为了避免频繁进行内存分配带来的系统开销，所以这里多分配了一部分缓存
+    if (newlen < SDS_MAX_PREALLOC)      // 如果小于 1MB, 则按照所需长度的 2倍 来分配
+        newlen *= 2;
     else
-        newlen += SDS_MAX_PREALLOC;
+        newlen += SDS_MAX_PREALLOC;     // 如果超过 1MB, 则每次额外增加 1MB 的容量来预分配
 
     type = sdsReqType(newlen); // 计算新的缓存大小需要的 header 类型
 

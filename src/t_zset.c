@@ -1141,7 +1141,7 @@ unsigned char *zzlFind(unsigned char *zl, sds ele, double *score)
 
     while (eptr != NULL)
     {
-        sptr = ziplistNext(zl, eptr);
+        sptr = ziplistNext(zl, eptr); // ziplist 中 element 和 score 的内存结构: <ele><score><ele><score>
         serverAssert(sptr != NULL);
 
         if (ziplistCompare(eptr, (unsigned char *)ele, sdslen(ele)))
@@ -1180,6 +1180,8 @@ unsigned char *zzlInsertAt(unsigned char *zl, unsigned char *eptr, sds ele, doub
     scorelen = d2string(scorebuf, sizeof(scorebuf), score);
     if (eptr == NULL)
     {
+        // <ele><score><ele><score>
+        // 先插入 element, 然后在尾部插入 score
         zl = ziplistPush(zl, (unsigned char *)ele, sdslen(ele), ZIPLIST_TAIL);
         zl = ziplistPush(zl, (unsigned char *)scorebuf, scorelen, ZIPLIST_TAIL);
     }
@@ -1533,6 +1535,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore)
     {
         unsigned char *eptr;
 
+        // zset 中已经存在相同的 element
         if ((eptr = zzlFind(zobj->ptr, ele, &curscore)) != NULL)
         {
             /* NX? Return, same element already exists. */
@@ -1556,6 +1559,7 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore)
             }
 
             /* Remove and re-insert when score changed. */
+            // zset 中已经存在相同的 element, 则删除原来的 element 和 score, 保存新的 element 和 score
             if (score != curscore)
             {
                 zobj->ptr = zzlDelete(zobj->ptr, eptr);
@@ -1874,13 +1878,13 @@ void zaddGenericCommand(client *c, int flags)
         if (xx)
             goto reply_to_client; /* No key + XX option: nothing to do. */
         if (server.zset_max_ziplist_entries == 0 ||
-            server.zset_max_ziplist_value < sdslen(c->argv[scoreidx + 1]->ptr))
+            server.zset_max_ziplist_value < sdslen(c->argv[scoreidx + 1]->ptr)) // 计算 value 的长度是否超过阈值(不是 score 的长度)
         {
-            zobj = createZsetObject();
+            zobj = createZsetObject(); // value 的长度超过设置的阈值，则使用 zskiplist 作为 zset 的内部数据结构
         }
         else
         {
-            zobj = createZsetZiplistObject();
+            zobj = createZsetZiplistObject(); // value 长度没有超过阈值, 使用 ziplist 作为内部数据结构
         }
         dbAdd(c->db, key, zobj);
     }

@@ -1749,7 +1749,7 @@ void clientsCron(void)
         /* The following functions do different service checks on the client.
          * The protocol is that they return non-zero if the client was
          * terminated. */
-        if (clientsCronHandleTimeout(c, now))
+        if (clientsCronHandleTimeout(c, now))       // 关闭空闲时间过长的客户端
             continue;
         if (clientsCronResizeQueryBuffer(c))
             continue;
@@ -2246,7 +2246,7 @@ extern int ProcessingEventsWhileBlocked;
  * call some other low-risk functions.
  *
  * 进入事件循环的回调: redis 在每次进入事件循环 aeProcessEvents-->aeApiPoll 之前, 都会调用该接口:
- * 1. 阻塞的 client 被解锁时, 完成后续的处理工作 -- processUnblockClients
+ * 1. 阻塞的 client 被解锁时, 完成后续的处理工作 -- processUnblockedClients
  * 2. 刷新 AOF 文件，将内核缓冲区中的数据写入磁盘 -- flushAppendOnlyFile
  * 3. 尝试将 redisServer.clients_pending_write 中 client 输出缓存区的数据发送到网络上 -- handleClientsWithPendingWrites
  * 4. 尝试处理 redisServer.clients_pending_read 中的每个挂起的 client 的读操作
@@ -2311,7 +2311,7 @@ void beforeSleep(struct aeEventLoop *eventLoop)
 
     /* Try to process pending commands for clients that were just unblocked. */
     if (listLength(server.unblocked_clients))
-        processUnblockedClients();
+        processUnblockedClients();      // 处理被解锁的客户端的后续工作
 
     /* Send all the slaves an ACK request if at least one client blocked
      * during the previous event loop iteration. Note that we do this after
@@ -4169,7 +4169,7 @@ int processCommand(client *c)
         call(c, CMD_CALL_FULL); // 执行命令的核心接口
         c->woff = server.master_repl_offset;
         if (listLength(server.ready_keys))
-            handleClientsBlockedOnKeys();
+            handleClientsBlockedOnKeys();       // 处理阻塞的客户端
     }
     return C_OK;
 }
