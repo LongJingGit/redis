@@ -221,13 +221,13 @@ robj *lookupKeyWriteOrReply(client *c, robj *key, robj *reply)
 void dbAdd(redisDb *db, robj *key, robj *val)
 {
     sds copy = sdsdup(key->ptr);
-    int retval = dictAdd(db->dict, copy, val);
+    int retval = dictAdd(db->dict, copy, val); // 注意: 保存到 hash 表中的 key 是 robj 对象中的 ptr, 但是 value 是 robj 对象
 
     serverAssertWithInfo(NULL, key, retval == DICT_OK);
     if (val->type == OBJ_LIST ||
         val->type == OBJ_ZSET ||
         val->type == OBJ_STREAM)
-        signalKeyAsReady(db, key);
+        signalKeyAsReady(db, key);   // 处理正在阻塞的客户端
     if (server.cluster_enabled)
         slotToKeyAdd(key->ptr);
 }

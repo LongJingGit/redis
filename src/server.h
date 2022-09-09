@@ -661,11 +661,15 @@ typedef struct redisObject
      * redisObject 的数据类型. 比如: OBJ_STRING, OBJ_LIST, OBJ_SET, OBJ_ZSET, OBJ_HASH, OBJ_MODULE, OBJ_STREAM
      * 分别对应着: t_string, t_list, t_set, t_zset, t_hash.
      *
-     * 同一种数据类型，底层可能使用不同的数据结构。比如 t_zset 底层可能使用 ziplist 或者 zskiplist, t_hash 底层可能使用 ziplist 或者 dict
+     * FIXME: bitmap(位图), geo(地理位置), hyperLogLog(基数统计) 这三种类型为什么没有宏定义?
      */
     unsigned type:4;
 
-    unsigned encoding:4;    // 对象的内部编码方式(OBJ_ENCODING_RAW OBJ_ENCODING_INT 等)
+    /**
+     * 对象的内部编码方式(OBJ_ENCODING_RAW OBJ_ENCODING_INT 等)。同一种数据类型，底层可能使用不同的数据结构:
+     * 比如 OBJ_ZSET 底层可能使用 ziplist(encoding = OBJ_ENCODING_ZIPLIST) 或者 zskiplist(encoding = OBJ_ENCODING_SKIPLIST)
+     */
+    unsigned encoding:4;
 
     /**
      * 淘汰策略需要使用到的字段:
@@ -728,7 +732,7 @@ typedef struct redisDb
     /**
      * 在 redis 中执行 list 的阻塞命令 blpop/brpop/brpoplpush 时，如果对应的 list 列表为空，Redis 会将对应的 client 设置为阻塞状态,
      * 同时将该 list 和 client 作为 key-value 添加到 blocking_keys 中. value 可以是 client 列表
-     * 当有其他地方向某个 key 对应的 list 中增加元素时，redis 会检测是否有 client 阻塞在这个 key 上，即检查 blocking_keys 中是否存在这个 key,
+     * 当有其他地方向某个 key 对应的 list 中增加元素时(执行 dbadd)，redis 会检测是否有 client 阻塞在这个 key 上，即检查 blocking_keys 中是否存在这个 key,
      * 如果存在，会将这个 key 添加到 ready_keys 中, 同时将这个 key 保存到 redisServer.ready_keys 中
      */
     dict *blocking_keys;  // Keys with clients waiting for data (BLPOP). key 与因为该 key 导致阻塞的 client 列表的映射
@@ -1515,7 +1519,7 @@ struct redisServer
     unsigned int blocked_clients;   /* # of clients executing a blocking cmd.*/ // 正在执行阻塞命令的 client 的数量
     unsigned int blocked_clients_by_type[BLOCKED_NUM];
 
-    list *unblocked_clients; /* list of clients to unblock before next loop */  // 当前处于 CLIENT_UNBLOCKED 状态的 client 的数量
+    list *unblocked_clients; /* list of clients to unblock before next loop */  // 当前处于 CLIENT_UNBLOCKED 状态的 client 的列表
 
     // 存储 readyList 对象的链表.
     list *ready_keys;        /* List of readyList structures for BLPOP & co */
@@ -1665,7 +1669,7 @@ struct redisCommand
     redisCommandProc *proc; // 该命令对应的函数指针
     int arity;  // 命令的参数个数限定值。如果为正数 N，表示命令的参数个数必须为 N 个；如果为负数 N，表明参数个数必须大于 N
 
-    char *sflags;   // Flags as string representation, one char per flag. 标记当前命令的属性，以字符形式标记
+    char *sflags;   // Flags as string representation, one char per flag. 标记当前命令的属性，以字符串形式标记
     uint64_t flags; // The actual flags, obtained from the 'sflags' field. 标记当前命令的属性，以掩码形式标记
 
     /* Use a function to determine keys arguments in a command line.

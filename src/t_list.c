@@ -1071,7 +1071,7 @@ void blockingPopGenericCommand(client *c, int where)
     }
 
     /* If the keys do not exist we must block */
-    // 如果 key 不存在，则需要阻塞住客户端 client
+    // 如果队列不存在或者队列中没有数据，则需要阻塞住客户端 client
     blockForKeys(c, BLOCKED_LIST, c->argv + 1, c->argc - 2, timeout, NULL, NULL);
 }
 
