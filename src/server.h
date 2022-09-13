@@ -764,7 +764,7 @@ typedef struct multiCmd
 // 描述 client 的事务状态
 typedef struct multiState
 {
-    multiCmd *commands;     /* Array of MULTI commands */   // 事务命令缓存队列
+    multiCmd *commands;     /* Array of MULTI commands */   // 事务命令缓存队列, 以数组的形式组织起来的
     int count;              /* Total number of MULTI commands */
     int cmd_flags;          /* The accumulated command flags OR-ed together.
                                So if at least a command has a given flag, it

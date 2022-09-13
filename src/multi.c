@@ -105,7 +105,7 @@ void flagTransaction(client *c)
         c->flags |= CLIENT_DIRTY_EXEC;
 }
 
-// client 执行 MULTI 命令, 实际上是为 client.flags 设置 CLIENT_MULTI 状态标记
+// client 执行 MULTI 命令, 实际上是为 client.flags 设置 CLIENT_MULTI 状态标记, 表示当前客户端开启了事务处理. 后续的命令会全部添加到事务队列中
 void multiCommand(client *c)
 {
     if (c->flags & CLIENT_MULTI)
@@ -190,10 +190,11 @@ void execCommand(client *c)
      * A failed EXEC in the first case returns a multi bulk nil object
      * (technically it is not an error but a special behavior), while
      * in the second an EXECABORT error is returned. */
+    // 判断命令是否有语法错误或者 watch 的 key 被修改的情况，如果存在这两种情况，不执行事务队列中的任何一条命令，直接返回错误
     if (c->flags & (CLIENT_DIRTY_CAS | CLIENT_DIRTY_EXEC))
     {
         addReply(c, c->flags & CLIENT_DIRTY_EXEC ? shared.execaborterr : shared.nullarray[c->resp]);
-        discardTransaction(c);
+        discardTransaction(c);      // 清空事务执行队列，从 watch_keys 中删除正在 watch 的 key
         goto handle_monitor;
     }
 
@@ -203,7 +204,7 @@ void execCommand(client *c)
     orig_argc = c->argc;
     orig_cmd = c->cmd;
     addReplyArrayLen(c, c->mstate.count);
-    for (j = 0; j < c->mstate.count; j++)       // 遍历命令，依次执行
+    for (j = 0; j < c->mstate.count; j++) // 遍历命令，依次执行
     {
         c->argc = c->mstate.commands[j].argc;
         c->argv = c->mstate.commands[j].argv;
@@ -296,6 +297,7 @@ typedef struct watchedKey
 } watchedKey;
 
 /* Watch for the specified key */
+// 将 key 添加到 client.watched_keys 和 client.db.watched_keys 中
 void watchForKey(client *c, robj *key)
 {
     list *clients = NULL;
@@ -391,9 +393,11 @@ void touchWatchedKey(redisDb *db, robj *key)
     listIter li;
     listNode *ln;
 
+    // 寻找该 key 是否被 watch, 如果没有被 watch, 则直接返回
     if (dictSize(db->watched_keys) == 0)
         return;
 
+    // 该 key 已经被 watch, 找到对应的 client
     clients = dictFetchValue(db->watched_keys, key);
     if (!clients)
         return;
@@ -405,7 +409,7 @@ void touchWatchedKey(redisDb *db, robj *key)
     {
         client *c = listNodeValue(ln);
 
-        c->flags |= CLIENT_DIRTY_CAS;
+        c->flags |= CLIENT_DIRTY_CAS;       // 将 client 标志设置为 CLIENT_DIRTY_CAS
     }
 }
 
@@ -450,10 +454,12 @@ void touchAllWatchedKeysInDb(redisDb *emptied, redisDb *replaced_with)
 }
 
 // 执行 WATCH 命令: 将命令添加到 client.watched_keys 和 redisDb.watched_keys 中
+// 注意: 这个命令必须在调用 multi 命令进入事务之前执行，而不能在事务的执行过程中执行。
 void watchCommand(client *c)
 {
     int j;
 
+    // watch 命令不能在事务执行过程中执行
     if (c->flags & CLIENT_MULTI)
     {
         addReplyError(c, "WATCH inside MULTI is not allowed");

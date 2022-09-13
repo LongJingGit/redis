@@ -658,7 +658,7 @@ long long dbTotalServerKeyCount()
  * a context of a client. */
 void signalModifiedKey(client *c, redisDb *db, robj *key)
 {
-    touchWatchedKey(db, key);
+    touchWatchedKey(db, key);       // 判断 key 是否是被 watch 的
     trackingInvalidateKey(c, key);
 }
 

@@ -4157,6 +4157,7 @@ int processCommand(client *c)
     }
 
     /* Exec the command */
+    // 当前 client 处于事务状态: 将命令加入到事务队列中
     if (c->flags & CLIENT_MULTI &&
         c->cmd->proc != execCommand && c->cmd->proc != discardCommand &&
         c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)
