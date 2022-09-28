@@ -179,7 +179,7 @@ void streamLogListpackContent(unsigned char *lp)
 
 /* Convert the specified stream entry ID as a 128 bit big endian number, so
  * that the IDs can be sorted lexicographically. */
-// 将 sreamID 按照大端序编码成一个 128 比特的数据，这样可以保证编码后的shju依然是满足字典序的
+// 将 sreamID 按照大端序编码成一个 128 比特的数据，这样可以保证编码后的数据依然是满足字典序的
 void streamEncodeID(void *buf, streamID *id)
 {
     uint64_t e[2];
@@ -232,7 +232,7 @@ int streamCompareID(streamID *a, streamID *b)
  * 2. If a size of a single element or the sum of the elements is too big to
  *    be stored into the stream. errno will be set to ERANGE.
  *
- * 向指定的消费队列 s 中插入一条新消息。
+ * 向指定的消息队列 s 中插入一条新消息。
  * 如果参数 added_id 不为 NULL, 新消息的消息ID会通过 added_id 返回；
  * 如果 use_id 为 NULL, 表示该消息使用系统自动生成的消息ID, 也就是根据 stream.last_id 来生成新消息的 id, 否则使用 use_id
  */
@@ -2073,8 +2073,8 @@ uint64_t streamDelConsumer(streamCG *cg, sds name)
     raxStop(&ri);
 
     /* Deallocate the consumer. */
-    raxRemove(cg->consumers, (unsigned char *)name, sdslen(name), NULL);        // 从消费者组中移除该消费者
-    streamFreeConsumer(consumer);       // 释放消费者 consumer
+    raxRemove(cg->consumers, (unsigned char *)name, sdslen(name), NULL); // 从消费者组中移除该消费者
+    streamFreeConsumer(consumer);                                        // 释放消费者 consumer
     return retval;
 }
 

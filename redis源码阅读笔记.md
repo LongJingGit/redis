@@ -767,8 +767,6 @@ hyperLogLog 的特点是统计过程不记录独立元素，占用内存非常�
 
 ### stream 可持久化的消息队列
 
-
-
 ## Redis 底层数据结构
 
 ### RedisDB
@@ -883,11 +881,11 @@ ziplist 的结构如图所示，主要包括 5 个部分。
 
 ![类图](images/redis内部数据结构-ziplist-3.png)
 
-由于 ziplist 是连续紧凑存储，没有冗余空间，所以插入新的元素需要 realloc 扩展内存，所以如果 ziplist 占用空间太大，realloc 重新分配内存和拷贝的开销就会很大，所以 ziplist 不适合存储过多元素，也不适合存储过大的字符串。
+由于 ziplist 是连续紧凑存储，没有冗余空间，所以插入新的元素需要 realloc 扩展内存，所以如果 ziplist 占用空间太大，realloc 重新分配内存和拷贝的开销就会很大，所以 ziplist 不适合存储过多元素，也不适合存储过大的字符串。因此只有在元素数量和 value 字节数都不大的时候, ziplist 才可以作为 hash 和 zset 的内部数据结构。
 
-因此只有在元素数和 value 数都不大的时候，ziplist 才作为 hash 和 zset 的内部数据结构。其中 hash 使用 ziplist 作为内部数据结构的限制时，元素数默认不超过 512 个，value 值默认不超过 64 字节。可以通过修改配置来调整 hash_max_ziplist_entries 、hash_max_ziplist_value 这两个阀值的大小。
+其中 hash 使用 ziplist 作为内部数据结构的时候，限制元素数量默认不超过 512 个, value 默认不超过 64 字节。可以通过修改配置(hash_max_ziplist_entries/hash_max_ziplist_value)来调整这两个阀值的大小。
 
-zset 有序集合，使用 ziplist 作为内部数据结构的限制元素数默认不超过 128 个，value 值默认不超过 64 字节。可以通过修改配置来调整 zset_max_ziplist_entries 和 zset_max_ziplist_value 这两个阀值的大小。
+zset 有序集合使用 ziplist 作为内部数据结构的时候，限制元素数默认不超过 128 个, value 默认不超过 64 字节。可以通过修改配置(zset_max_ziplist_entries/zset_max_ziplist_value)来调整这两个阀值的大小。
 
 ### quicklist
 
